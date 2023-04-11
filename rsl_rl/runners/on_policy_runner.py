@@ -59,9 +59,10 @@ class OnPolicyRunner:
         else:
             num_critic_obs = self.env.num_obs
         actor_critic_class = eval(self.cfg["policy_class_name"]) # ActorCritic
+        num_actions=self.env.num_actions if 'num_actions' not in train_cfg else train_cfg['num_actions']
         actor_critic: ActorCritic = actor_critic_class( self.env.num_obs,
                                                         num_critic_obs,
-                                                        self.env.num_actions,
+                                                        num_actions,
                                                         **self.policy_cfg).to(self.device)
         alg_class = eval(self.cfg["algorithm_class_name"]) # PPO
         self.alg: PPO = alg_class(actor_critic, device=self.device, **self.alg_cfg)
@@ -69,7 +70,7 @@ class OnPolicyRunner:
         self.save_interval = self.cfg["save_interval"]
 
         # init storage and model
-        self.alg.init_storage(self.env.num_envs, self.num_steps_per_env, [self.env.num_obs], [self.env.num_privileged_obs], [self.env.num_actions])
+        self.alg.init_storage(self.env.num_envs, self.num_steps_per_env, [self.env.num_obs], [self.env.num_privileged_obs], [num_actions])
 
         # Log
         self.log_dir = log_dir
