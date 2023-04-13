@@ -113,25 +113,33 @@ class HierarchicalRunner(BaseRunner):
         i_low = 0
         i_mid = 0
 
+        mid_actions = torch.rand(self.env.num_envs, 6, dtype=torch.float32, device=self.device) - 0.5
+        low_dones = torch.ones(self.env.num_envs, dtype=torch.bool, device=self.device)
+
         for it in range(self.current_learning_iteration, tot_iter):
             start = time.time()
             # Rollout
             with torch.inference_mode():
                 for i in range(self.num_steps_per_env):
                     high_actions = torch.zeros(self.env.num_envs, 4, dtype=torch.int, device=self.device)
-                    mid_actions = torch.zeros(self.env.num_envs, 6, dtype=torch.int, device=self.device)
+                    # set mid actions to -0.5 to 0.5
+                    mid_actions[low_dones] = torch.rand(torch.sum(low_dones), 6, dtype=torch.float32,
+                                                        device=self.device) - 0.5
+
                     low_obs = self.get_low_obs(obs, mid_actions)
                     low_critic_obs = low_obs
                     low_actions = self.low_alg.act(low_obs, low_critic_obs)
                     obs, privileged_obs, high_rewards, dones, infos = self.env.step(low_actions, high_actions,
                                                                                     mid_actions)
                     mid_rewards, low_rewards = self.env.get_reward_mid_low()
+                    mid_dones, low_dones = self.env.get_done_mid_low()
                     critic_obs = privileged_obs if privileged_obs is not None else obs
-                    obs, critic_obs, high_rewards, dones = obs.to(self.device), critic_obs.to(self.device), high_rewards.to(
+                    obs, critic_obs, high_rewards, dones = obs.to(self.device), critic_obs.to(
+                        self.device), high_rewards.to(
                         self.device), dones.to(self.device)
-                    low_rewards = low_rewards.to(self.device)
-                    mid_rewards = mid_rewards.to(self.device)
-                    self.low_alg.process_env_step(low_rewards, dones, infos)
+                    low_rewards, mid_rewards, low_dones, mid_dones = low_rewards.to(self.device), mid_rewards.to(
+                        self.device), low_dones.to(self.device), mid_dones.to(self.device)
+                    self.low_alg.process_env_step(low_rewards, low_dones, infos)
 
                     if self.log_dir is not None:
                         # Book keeping
@@ -139,11 +147,11 @@ class HierarchicalRunner(BaseRunner):
                             ep_infos.append(infos['episode'])
                         cur_reward_sum += high_rewards
                         cur_episode_length += 1
-                        new_ids = (dones > 0).nonzero(as_tuple=False)
-                        rewbuffer.extend(cur_reward_sum[new_ids][:, 0].cpu().numpy().tolist())
-                        lenbuffer.extend(cur_episode_length[new_ids][:, 0].cpu().numpy().tolist())
-                        cur_reward_sum[new_ids] = 0
-                        cur_episode_length[new_ids] = 0
+                        low_new_ids = (low_dones > 0).nonzero(as_tuple=False)
+                        rewbuffer.extend(cur_reward_sum[low_new_ids][:, 0].cpu().numpy().tolist())
+                        lenbuffer.extend(cur_episode_length[low_new_ids][:, 0].cpu().numpy().tolist())
+                        cur_reward_sum[low_new_ids] = 0
+                        cur_episode_length[low_new_ids] = 0
 
                 stop = time.time()
                 collection_time = stop - start
