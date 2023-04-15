@@ -165,28 +165,32 @@ class HierarchicalRunner(BaseRunner):
 
         mid_temp_buffer = TempBuffer(self.env.num_envs, self.mid_num_obs, self.device)
 
-        low_it = torch.zeros_like(low_dones, dtype=torch.int)
+        high_it = torch.zeros_like(low_dones, dtype=torch.int)
         mid_it = torch.zeros_like(low_dones, dtype=torch.int)
+        low_it = torch.zeros_like(low_dones, dtype=torch.int)
         for it in range(self.current_learning_iteration, tot_iter):
             start = time.time()
             # Rollout
             with torch.inference_mode():
                 for hi in range(self.high_num_steps):
-                    high_obs = self.get_high_obs(obs, mid_dones)
+                    high_it[:] = hi
+                    high_obs = self.get_high_obs(obs, mid_dones, high_it)
                     high_critic_obs = high_obs
                     high_actions = self.high_alg.act(high_obs, high_critic_obs)
 
                     for mi in range(self.mid_num_steps):
+                        mid_it[:] = mi
                         mid_timeout[:] = (mi == self.mid_num_steps - 1)
-                        mid_obs = self.get_mid_obs(obs, high_actions, low_dones)
+                        mid_obs = self.get_mid_obs(obs, high_actions, low_dones, mid_it)
                         # mid_obs = mid_obs.view(self.env.num_envs, -1)[low_dones]
                         mid_critic_obs = mid_obs
                         mid_actions = self.mid_alg.act(mid_obs, mid_critic_obs)
 
                         for li in range(self.low_num_steps):
+                            low_it[:] = li
                             low_timeout[:] = (li == self.low_num_steps - 1)
                             mid_low_timeout = mid_timeout & low_timeout
-                            low_obs = self.get_low_obs(obs, mid_actions)
+                            low_obs = self.get_low_obs(obs, mid_actions, low_it)
                             low_critic_obs = low_obs
                             low_actions = self.low_alg.act(low_obs, low_critic_obs)
                             obs, privileged_obs, high_rewards, dones, infos = self.env.step(low_actions, high_actions,
@@ -383,14 +387,15 @@ class HierarchicalRunner(BaseRunner):
         self.current_learning_iteration = loaded_dict['iter']
         return loaded_dict['infos']
 
-    def get_high_obs(self, obs, mid_dones):
-        return torch.cat([obs[..., self.high_obs_idx], mid_dones.unsqueeze(1)], dim=1)
+    def get_high_obs(self, obs, mid_dones, t):
+        # t to tensor, with the same shape as mid_dones
+        return torch.cat([obs[..., self.high_obs_idx], mid_dones.unsqueeze(1), t.unsqueeze(1)], dim=1)
 
-    def get_mid_obs(self, obs, high_actions, low_dones, t=None):
-        return torch.cat([obs[..., self.mid_obs_idx], high_actions, low_dones.unsqueeze(1)], dim=1)
+    def get_mid_obs(self, obs, high_actions, low_dones, t):
+        return torch.cat([obs[..., self.mid_obs_idx], high_actions, low_dones.unsqueeze(1), t.unsqueeze(1)], dim=1)
 
-    def get_low_obs(self, obs, mid_actions, t=None):
-        return torch.cat([obs[..., self.low_obs_idx], mid_actions], dim=1)
+    def get_low_obs(self, obs, mid_actions, t):
+        return torch.cat([obs[..., self.low_obs_idx], mid_actions, t.unsqueeze(1)], dim=1)
 
     def get_inference_policy(self, device=None):
         raise NotImplementedError
