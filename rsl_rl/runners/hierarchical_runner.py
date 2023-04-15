@@ -162,17 +162,20 @@ class HierarchicalRunner(BaseRunner):
         mid_temp_buffer = TempBuffer(self.env.num_envs, self.mid_num_obs, self.device)
 
         low_it = torch.zeros_like(low_dones, dtype=torch.int)
+        mid_it = torch.zeros_like(low_dones, dtype=torch.int)
         for it in range(self.current_learning_iteration, tot_iter):
             start = time.time()
             # Rollout
             with torch.inference_mode():
                 for i in range(self.num_steps_per_env):
-                    high_actions[mid_dones, :] = \
-                        torch.rand(self.env.num_envs, 4, dtype=torch.float32, device=self.device)[mid_dones]
+                    high_obs = self.get_high_obs(obs, mid_dones)
+                    high_critic_obs = high_obs
+                    new_high_actions = self.high_alg.act(high_obs, high_critic_obs)
+                    high_actions[mid_dones] = new_high_actions[mid_dones]
+
                     mid_obs = self.get_mid_obs(obs, high_actions, low_dones)
                     # mid_obs = mid_obs.view(self.env.num_envs, -1)[low_dones]
                     mid_critic_obs = mid_obs
-
                     new_mid_actions = self.mid_alg.act(mid_obs, mid_critic_obs)
                     mid_actions[low_dones] = new_mid_actions[low_dones]
 
@@ -193,10 +196,12 @@ class HierarchicalRunner(BaseRunner):
                     low_dones |= low_it > self.low_num_steps
                     low_dones |= dones
                     low_it[low_dones] = 0
-                    # low_it[low_timeout] = 0
                     low_it = low_it + 1
 
+                    mid_dones |= mid_it > self.mid_num_steps
                     mid_dones |= dones
+                    mid_it[mid_dones] = 0
+                    mid_it = mid_it + 1
 
                     critic_obs = privileged_obs if privileged_obs is not None else obs
                     obs, critic_obs, high_rewards, dones = obs.to(self.device), critic_obs.to(
@@ -208,6 +213,8 @@ class HierarchicalRunner(BaseRunner):
                     self.low_alg.process_env_step(low_rewards, low_dones, infos)
 
                     self.mid_alg.process_env_step(mid_rewards, mid_dones, infos)
+
+                    self.high_alg.process_env_step(high_rewards, dones, infos)
 
                     if self.log_dir is not None:
                         # Book keeping
@@ -242,6 +249,7 @@ class HierarchicalRunner(BaseRunner):
                 start = stop
                 self.low_alg.compute_returns(low_critic_obs)
                 self.mid_alg.compute_returns(mid_critic_obs)
+                self.high_alg.compute_returns(high_critic_obs)
 
                 # stop = time.time()
                 # collection_time = stop - start
@@ -251,12 +259,9 @@ class HierarchicalRunner(BaseRunner):
                 # self.high_alg.compute_returns(high_obs)
 
             # Update the networks
-            # high_value_loss, high_surrogate_loss = self.high_alg.update()
-            high_value_loss, high_surrogate_loss = 0, 0
-            mid_value_loss, mid_surrogate_loss = self.mid_alg.update()
-            # mid_value_loss, mid_surrogate_loss = 0, 0
-
             low_value_loss, low_surrogate_loss = self.low_alg.update()
+            mid_value_loss, mid_surrogate_loss = self.mid_alg.update()
+            high_value_loss, high_surrogate_loss = self.high_alg.update()
 
             stop = time.time()
             learn_time = stop - start
@@ -388,8 +393,8 @@ class HierarchicalRunner(BaseRunner):
         self.current_learning_iteration = loaded_dict['iter']
         return loaded_dict['infos']
 
-    def get_high_obs(self, obs):
-        return obs[..., self.high_obs_idx]
+    def get_high_obs(self, obs, mid_dones):
+        return torch.cat([obs[..., self.high_obs_idx], mid_dones.unsqueeze(1)], dim=1)
 
     def get_mid_obs(self, obs, high_actions, low_dones, t=None):
         return torch.cat([obs[..., self.mid_obs_idx], high_actions, low_dones.unsqueeze(1)], dim=1)
