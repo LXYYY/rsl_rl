@@ -53,6 +53,8 @@ class HierarchicalRunner(BaseRunner):
 
         self.low_num_steps = self.policy_cfg["low"]["num_steps"]
         self.mid_num_steps = self.policy_cfg["mid"]["num_steps"]
+        self.high_num_steps = self.policy_cfg["high"]["num_steps"]
+        # self.high_num_steps *= self.env.max_episode_length_s
 
         high_num_actions = self.policy_cfg["high"]["num_actions"]
         del self.policy_cfg["high"]["num_actions"]
@@ -157,7 +159,9 @@ class HierarchicalRunner(BaseRunner):
         high_actions[:, 1] = 0.4  # y
         mid_actions = torch.rand(self.env.num_envs, 6, dtype=torch.float32, device=self.device) - 0.5
         low_dones = torch.ones(self.env.num_envs, dtype=torch.bool, device=self.device)
+        low_timeout = torch.ones(self.env.num_envs, dtype=torch.bool, device=self.device)
         mid_dones = torch.ones(self.env.num_envs, dtype=torch.bool, device=self.device)
+        mid_timeout = torch.ones(self.env.num_envs, dtype=torch.bool, device=self.device)
 
         mid_temp_buffer = TempBuffer(self.env.num_envs, self.mid_num_obs, self.device)
 
@@ -167,96 +171,82 @@ class HierarchicalRunner(BaseRunner):
             start = time.time()
             # Rollout
             with torch.inference_mode():
-                for i in range(self.num_steps_per_env):
+                for hi in range(self.high_num_steps):
                     high_obs = self.get_high_obs(obs, mid_dones)
                     high_critic_obs = high_obs
-                    new_high_actions = self.high_alg.act(high_obs, high_critic_obs)
-                    high_actions[mid_dones] = new_high_actions[mid_dones]
+                    high_actions = self.high_alg.act(high_obs, high_critic_obs)
 
-                    mid_obs = self.get_mid_obs(obs, high_actions, low_dones)
-                    # mid_obs = mid_obs.view(self.env.num_envs, -1)[low_dones]
-                    mid_critic_obs = mid_obs
-                    new_mid_actions = self.mid_alg.act(mid_obs, mid_critic_obs)
-                    mid_actions[low_dones] = new_mid_actions[low_dones]
+                    for mi in range(self.mid_num_steps):
+                        mid_timeout[:] = (mi == self.mid_num_steps - 1)
+                        mid_obs = self.get_mid_obs(obs, high_actions, low_dones)
+                        # mid_obs = mid_obs.view(self.env.num_envs, -1)[low_dones]
+                        mid_critic_obs = mid_obs
+                        mid_actions = self.mid_alg.act(mid_obs, mid_critic_obs)
 
-                    low_obs = self.get_low_obs(obs, mid_actions)
-                    low_critic_obs = low_obs
-                    low_actions = self.low_alg.act(low_obs, low_critic_obs)
-                    obs, privileged_obs, high_rewards, dones, infos = self.env.step(low_actions, high_actions,
-                                                                                    mid_actions)
-                    mid_rewards, low_rewards = self.env.get_reward_mid_low()
-                    mid_dones, low_dones = self.env.get_done_mid_low()
+                        for li in range(self.low_num_steps):
+                            low_timeout[:] = (li == self.low_num_steps - 1)
+                            mid_low_timeout = mid_timeout & low_timeout
+                            low_obs = self.get_low_obs(obs, mid_actions)
+                            low_critic_obs = low_obs
+                            low_actions = self.low_alg.act(low_obs, low_critic_obs)
+                            obs, privileged_obs, high_rewards, dones, infos = self.env.step(low_actions, high_actions,
+                                                                                            mid_actions, low_timeout,
+                                                                                            mid_low_timeout)
+                            mid_rewards, low_rewards = self.env.get_reward_mid_low()
+                            high_dones, mid_dones, low_dones = self.env.get_done_levels()
 
-                    # if torch.sum(low_dones) > 0:
-                    #     mid_temp_buffer.add(mid_obs, mid_rewards[low_dones], mid_dones[low_dones], infos)
-                    #     if mid_temp_buffer.is_full():
-                    #         self.mid_alg.process_env_step(*mid_temp_buffer.pop())
-                    #         mid_temp_buffer.clear()
+                            critic_obs = privileged_obs if privileged_obs is not None else obs
+                            obs, critic_obs, high_rewards, dones = obs.to(self.device), critic_obs.to(
+                                self.device), high_rewards.to(
+                                self.device), dones.to(self.device)
+                            low_rewards, mid_rewards, low_dones, mid_dones = low_rewards.to(
+                                self.device), mid_rewards.to(
+                                self.device), low_dones.to(self.device), mid_dones.to(self.device)
 
-                    low_dones |= low_it > self.low_num_steps
-                    low_dones |= dones
-                    low_it[low_dones] = 0
-                    low_it = low_it + 1
+                            self.low_alg.process_env_step(low_rewards, low_dones, infos)
 
-                    mid_dones |= mid_it > self.mid_num_steps
-                    mid_dones |= dones
-                    mid_it[mid_dones] = 0
-                    mid_it = mid_it + 1
+                            if self.log_dir is not None:
+                                # Book keeping
+                                if 'episode' in infos:
+                                    ep_infos.append(infos['episode'])
+                                cur_reward_sum += high_rewards
+                                cur_mid_rew_sum += mid_rewards
+                                cur_low_rew_sum += low_rewards
+                                cur_episode_length += 1
+                                cur_mid_episode_length += 1
+                                cur_low_episode_length += 1
+                                # TODO: this is not accurate
+                                new_ids = ((high_dones | dones) > 0).nonzero(as_tuple=False)
+                                low_new_ids = (low_dones | dones > 0).nonzero(as_tuple=False)
+                                mid_new_ids = (mid_dones | dones > 0).nonzero(as_tuple=False)
+                                rewbuffer.extend(cur_reward_sum[low_new_ids][:, 0].cpu().numpy().tolist())
+                                mid_rewbuffer.extend(cur_mid_rew_sum[mid_new_ids][:, 0].cpu().numpy().tolist())
+                                low_rewbuffer.extend(cur_low_rew_sum[low_new_ids][:, 0].cpu().numpy().tolist())
+                                lenbuffer.extend(cur_episode_length[new_ids][:, 0].cpu().numpy().tolist())
+                                mid_lenbuffer.extend(cur_mid_episode_length[mid_new_ids][:, 0].cpu().numpy().tolist())
+                                low_lenbuffer.extend(cur_low_episode_length[low_new_ids][:, 0].cpu().numpy().tolist())
+                                cur_reward_sum[new_ids] = 0
+                                cur_low_rew_sum[low_new_ids] = 0
+                                cur_mid_rew_sum[mid_new_ids] = 0
+                                cur_episode_length[new_ids] = 0
+                                cur_mid_episode_length[mid_new_ids] = 0
+                                cur_low_episode_length[low_new_ids] = 0
 
-                    critic_obs = privileged_obs if privileged_obs is not None else obs
-                    obs, critic_obs, high_rewards, dones = obs.to(self.device), critic_obs.to(
-                        self.device), high_rewards.to(
-                        self.device), dones.to(self.device)
-                    low_rewards, mid_rewards, low_dones, mid_dones = low_rewards.to(self.device), mid_rewards.to(
-                        self.device), low_dones.to(self.device), mid_dones.to(self.device)
+                        self.low_alg.compute_returns(low_critic_obs)
 
-                    self.low_alg.process_env_step(low_rewards, low_dones, infos)
+                        self.mid_alg.process_env_step(mid_rewards, mid_dones, infos)
 
-                    self.mid_alg.process_env_step(mid_rewards, mid_dones, infos)
+                    self.mid_alg.compute_returns(mid_critic_obs)
 
                     self.high_alg.process_env_step(high_rewards, dones, infos)
 
-                    if self.log_dir is not None:
-                        # Book keeping
-                        if 'episode' in infos:
-                            ep_infos.append(infos['episode'])
-                        cur_reward_sum += high_rewards
-                        cur_mid_rew_sum += mid_rewards
-                        cur_low_rew_sum += low_rewards
-                        cur_episode_length += 1
-                        cur_mid_episode_length += 1
-                        cur_low_episode_length += 1
-                        new_ids = (dones > 0).nonzero(as_tuple=False)
-                        low_new_ids = (low_dones > 0).nonzero(as_tuple=False)
-                        mid_new_ids = (mid_dones > 0).nonzero(as_tuple=False)
-                        rewbuffer.extend(cur_reward_sum[low_new_ids][:, 0].cpu().numpy().tolist())
-                        mid_rewbuffer.extend(cur_mid_rew_sum[mid_new_ids][:, 0].cpu().numpy().tolist())
-                        low_rewbuffer.extend(cur_low_rew_sum[low_new_ids][:, 0].cpu().numpy().tolist())
-                        lenbuffer.extend(cur_episode_length[new_ids][:, 0].cpu().numpy().tolist())
-                        mid_lenbuffer.extend(cur_mid_episode_length[mid_new_ids][:, 0].cpu().numpy().tolist())
-                        low_lenbuffer.extend(cur_low_episode_length[low_new_ids][:, 0].cpu().numpy().tolist())
-                        cur_reward_sum[new_ids] = 0
-                        cur_low_rew_sum[low_new_ids] = 0
-                        cur_mid_rew_sum[mid_new_ids] = 0
-                        cur_episode_length[new_ids] = 0
-                        cur_mid_episode_length[mid_new_ids] = 0
-                        cur_low_episode_length[low_new_ids] = 0
+                self.high_alg.compute_returns(high_critic_obs)
 
                 stop = time.time()
                 collection_time = stop - start
 
                 # Learning step
                 start = stop
-                self.low_alg.compute_returns(low_critic_obs)
-                self.mid_alg.compute_returns(mid_critic_obs)
-                self.high_alg.compute_returns(high_critic_obs)
-
-                # stop = time.time()
-                # collection_time = stop - start
-                #
-                # start = stop
-
-                # self.high_alg.compute_returns(high_obs)
 
             # Update the networks
             low_value_loss, low_surrogate_loss = self.low_alg.update()
