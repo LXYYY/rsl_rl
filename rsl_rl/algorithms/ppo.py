@@ -104,9 +104,18 @@ class PPO:
         self.transition.critic_observations = critic_obs
         return self.transition.actions
 
-    def process_env_step(self, rewards, dones, infos, obs=None):
+    def process_env_step(self, rewards, dones, infos, actions=None, obs=None, critic_obs=None):
+        if actions is not None:
+            self.transition.actions = actions
         if obs is not None:
             self.transition.observations = obs
+        if critic_obs is not None:
+            self.transition.critic_observations = critic_obs
+        if self.transition.values is None:
+            self.transition.values = self.actor_critic.evaluate(critic_obs).detach()
+            self.transition.actions_log_prob = self.actor_critic.get_actions_log_prob(actions).detach()
+            self.transition.action_mean = self.actor_critic.action_mean.detach()
+            self.transition.action_sigma = self.actor_critic.action_std.detach()
         self.transition.rewards = rewards.clone()
         self.transition.dones = dones
         # Bootstrapping on time outs
@@ -146,8 +155,8 @@ class PPO:
                 with torch.inference_mode():
                     kl = torch.sum(
                         torch.log(sigma_batch / old_sigma_batch + 1.e-5) + (
-                                    torch.square(old_sigma_batch) + torch.square(old_mu_batch - mu_batch)) / (
-                                    2.0 * torch.square(sigma_batch)) - 0.5, axis=-1)
+                                torch.square(old_sigma_batch) + torch.square(old_mu_batch - mu_batch)) / (
+                                2.0 * torch.square(sigma_batch)) - 0.5, axis=-1)
                     kl_mean = torch.mean(kl)
 
                     if kl_mean > self.desired_kl * 2.0:
