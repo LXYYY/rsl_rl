@@ -88,19 +88,21 @@ class HierarchicalRunner(BaseRunner):
         high_actor_critic: ActorCritic = actor_critic_class(high_num_obs,
                                                             high_num_critic_obs,
                                                             high_num_actions,
-                                                            action_activation='sigmoid',
+                                                            action_activation='tanh',
                                                             **high_policy_cfg).to(self.device)
         self.high_alg: PPO = alg_class(high_actor_critic, device=self.device, **self.alg_cfg)
 
         mid_actor_critic: ActorCritic = actor_critic_class(mid_num_obs,
                                                            mid_num_critic_obs,
                                                            mid_num_actions,
+                                                           action_activation='sigmoid',
                                                            **mid_policy_cfg).to(self.device)
         self.mid_alg: PPO = alg_class(mid_actor_critic, device=self.device, **self.alg_cfg)
 
         low_actor_critic: ActorCritic = actor_critic_class(low_num_obs,
                                                            low_num_critic_obs,
                                                            low_num_actions,
+                                                           action_activation='sigmoid',
                                                            **low_policy_cfg).to(self.device)
         self.low_alg: PPO = alg_class(low_actor_critic, device=self.device, **self.alg_cfg)
 
@@ -183,6 +185,7 @@ class HierarchicalRunner(BaseRunner):
                         high_it[:] = hi
                         high_critic_obs = high_obs
                         high_actions = self.high_alg.act(high_obs, high_critic_obs)
+                        high_actions = self.env.map_high_actions(high_actions)
 
                     mi = step % self.mid_num_steps
                     cmi = (step % self.high_num_steps) // self.mid_num_steps
@@ -194,6 +197,7 @@ class HierarchicalRunner(BaseRunner):
                         # mid_obs = mid_obs.view(self.env.num_envs, -1)[low_dones]
                         mid_critic_obs = mid_obs
                         mid_actions = self.mid_alg.act(mid_obs, mid_critic_obs)
+                        mid_actions = self.env.map_mid_actions(mid_actions)
 
                     cli = (step % self.high_num_steps) % self.mid_num_steps
                     low_update = cli == self.mid_num_steps - 1
@@ -205,6 +209,7 @@ class HierarchicalRunner(BaseRunner):
                     low_obs = self.get_low_obs(obs, mid_actions, low_it)
                     low_critic_obs = low_obs
                     low_actions = self.low_alg.act(low_obs, low_critic_obs)
+                    low_actions = self.env.map_low_actions(low_actions)
                     obs, privileged_obs, high_rewards, dones, infos = self.env.step(low_actions, high_actions,
                                                                                     mid_actions, low_timeout,
                                                                                     mid_low_timeout)
@@ -436,6 +441,7 @@ class HierarchicalRunner(BaseRunner):
             self.high_alg.actor_critic.to(device)
 
         def policy_fn(obs):
+            t = obs[..., -1]
             # Get the current high-level observation from the environment
             high_obs = self.get_high_obs(obs).to(self.device)
 
