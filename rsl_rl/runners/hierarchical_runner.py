@@ -102,7 +102,7 @@ class HierarchicalRunner(BaseRunner):
         low_actor_critic: ActorCritic = actor_critic_class(low_num_obs,
                                                            low_num_critic_obs,
                                                            low_num_actions,
-                                                           action_activation='sigmoid',
+                                                           # action_activation='sigmoid',
                                                            **low_policy_cfg).to(self.device)
         self.low_alg: PPO = alg_class(low_actor_critic, device=self.device, **self.alg_cfg)
 
