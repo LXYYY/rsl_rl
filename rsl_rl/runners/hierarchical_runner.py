@@ -100,21 +100,21 @@ class HierarchicalRunner(BaseRunner):
         high_actor_critic: ActorCritic = actor_critic_class(high_num_obs,
                                                             high_num_critic_obs,
                                                             high_num_actions,
-                                                            # action_activation='tanh',
+                                                            action_activation='tanh',
                                                             **high_policy_cfg).to(self.device)
         self.high_alg: PPO = alg_class(high_actor_critic, device=self.device, **self.alg_cfg)
 
         mid_actor_critic: ActorCritic = actor_critic_class(mid_num_obs,
                                                            mid_num_critic_obs,
                                                            mid_num_actions,
-                                                           # action_activation='sigmoid',
+                                                           action_activation='sigmoid',
                                                            **mid_policy_cfg).to(self.device)
         self.mid_alg: PPO = alg_class(mid_actor_critic, device=self.device, **self.alg_cfg)
 
         low_actor_critic: ActorCritic = actor_critic_class(low_num_obs,
                                                            low_num_critic_obs,
                                                            low_num_actions,
-                                                           # action_activation='sigmoid',
+                                                           action_activation='sigmoid',
                                                            **low_policy_cfg).to(self.device)
         self.low_alg: PPO = alg_class(low_actor_critic, device=self.device, **self.alg_cfg)
 
@@ -218,35 +218,35 @@ class HierarchicalRunner(BaseRunner):
                         high_obs = self.get_high_obs(obs, high_actions, mid_dones)
                         high_critic_obs = high_obs
                         high_actions = self.high_alg.act(high_obs, high_critic_obs)
-                        high_actions[:] *= self.high_actions_scale
-                        # high_actions = self.env.map_high_actions(high_actions)
+                        # high_actions[:] *= self.high_actions_scale
+                        high_actions = self.env.map_high_actions(high_actions)
 
                     mi = step % self.mid_num_steps
                     cmi = (step % self.high_num_steps) // self.mid_num_steps
                     if mi == 0:
-                        mid_timeout[:] = mid_update
                         # mid_obs = mid_obs.view(self.env.num_envs, -1)[low_dones]
                         mid_obs = self.get_mid_obs(obs, mid_actions, high_actions, low_dones)
                         mid_critic_obs = mid_obs
                         mid_actions = self.mid_alg.act(mid_obs, mid_critic_obs)
-                        mid_actions[:] *= self.mid_actions_scale
-                        # mid_actions = self.env.map_mid_actions(mid_actions)
+                        # mid_actions[:] *= self.mid_actions_scale
+                        mid_actions = self.env.map_mid_actions(mid_actions)
 
                     cli = (step % self.high_num_steps) % self.mid_num_steps
                     low_update = (cli == self.mid_num_steps - 1)  # or dones[0]
                     mid_update &= low_update
+                    mid_timeout[:] = mid_update
                     # for li in range(self.low_num_steps):
                     low_it[:] = cli
                     low_timeout[:] = low_update
-                    mid_low_timeout = mid_timeout & low_timeout
+                    # mid_low_timeout = mid_timeout & low_timeout
                     low_obs = self.get_low_obs(obs, low_actions, mid_actions)
                     low_critic_obs = low_obs
                     low_actions = self.low_alg.act(low_obs, low_critic_obs)
-                    low_actions[:] *= self.low_actions_scale
-                    # low_actions = self.env.map_low_actions(low_actions)
+                    # low_actions[:] *= self.low_actions_scale
+                    low_actions = self.env.map_low_actions(low_actions)
                     obs, privileged_obs, new_high_rewards, dones, infos = self.env.step(low_actions, high_actions,
                                                                                         mid_actions, low_timeout,
-                                                                                        mid_low_timeout)
+                                                                                        mid_timeout)
                     new_mid_rewards, low_rewards = self.env.get_reward_mid_low()
                     high_dones, mid_dones, low_dones = self.env.get_done_levels()
 
