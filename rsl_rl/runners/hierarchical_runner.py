@@ -46,6 +46,13 @@ class HierarchicalRunner(BaseRunner):
 
         super().__init__(env, train_cfg, log_dir, device)
 
+        self.high_batch_n = 5
+        self.mid_batch_n = 3
+        self.low_batch_n = 3
+        self.high_actions_scale = 0.1
+        self.mid_actions_scale = 0.1
+        self.low_actions_scale = 1
+
     def init_networks(self):
         self.high_obs_idx = self.policy_cfg["high"]["obs_idx"]
         self.mid_obs_idx = self.policy_cfg["mid"]["obs_idx"]
@@ -57,18 +64,23 @@ class HierarchicalRunner(BaseRunner):
         # self.high_num_steps *= self.env.max_episode_length_s
 
         high_num_actions = self.policy_cfg["high"]["num_actions"]
+        self.high_num_actions = high_num_actions
         del self.policy_cfg["high"]["num_actions"]
         mid_num_actions = self.policy_cfg["mid"]["num_actions"]
+        self.mid_num_actions = mid_num_actions
         del self.policy_cfg["mid"]["num_actions"]
         low_num_actions = self.policy_cfg["low"]["num_actions"]
+        self.low_num_actions = low_num_actions
         del self.policy_cfg["low"]["num_actions"]
 
         high_num_obs = self.policy_cfg["high"]["num_obs"]
+        self.high_num_obs = high_num_obs
         high_num_critic_obs = high_num_obs
         mid_num_obs = self.policy_cfg["mid"]["num_obs"]
         self.mid_num_obs = mid_num_obs
         mid_num_critic_obs = mid_num_obs
         low_num_obs = self.policy_cfg["low"]["num_obs"]
+        self.low_num_obs = low_num_obs
         low_num_critic_obs = low_num_obs
 
         high_num_steps_per_env = self.policy_cfg["high"]["num_steps_per_env"]
@@ -88,14 +100,14 @@ class HierarchicalRunner(BaseRunner):
         high_actor_critic: ActorCritic = actor_critic_class(high_num_obs,
                                                             high_num_critic_obs,
                                                             high_num_actions,
-                                                            action_activation='tanh',
+                                                            # action_activation='tanh',
                                                             **high_policy_cfg).to(self.device)
         self.high_alg: PPO = alg_class(high_actor_critic, device=self.device, **self.alg_cfg)
 
         mid_actor_critic: ActorCritic = actor_critic_class(mid_num_obs,
                                                            mid_num_critic_obs,
                                                            mid_num_actions,
-                                                           action_activation='sigmoid',
+                                                           # action_activation='sigmoid',
                                                            **mid_policy_cfg).to(self.device)
         self.mid_alg: PPO = alg_class(mid_actor_critic, device=self.device, **self.alg_cfg)
 
@@ -159,10 +171,9 @@ class HierarchicalRunner(BaseRunner):
         i_low = 0
         i_mid = 0
 
-        high_actions = torch.zeros(self.env.num_envs, 4, dtype=torch.float32, device=self.device)
-        high_actions[:, 0] = 1  # x
-        high_actions[:, 1] = 0.4  # y
-        mid_actions = torch.rand(self.env.num_envs, 6, dtype=torch.float32, device=self.device) - 0.5
+        high_actions = torch.rand(self.env.num_envs, self.high_num_actions, dtype=torch.float32, device=self.device)
+        mid_actions = torch.rand(self.env.num_envs, self.mid_num_actions, dtype=torch.float32, device=self.device)
+        low_actions = torch.rand(self.env.num_envs, self.low_num_actions, dtype=torch.float32, device=self.device)
         low_dones = torch.ones(self.env.num_envs, dtype=torch.bool, device=self.device)
         low_timeout = torch.ones(self.env.num_envs, dtype=torch.bool, device=self.device)
         mid_dones = torch.ones(self.env.num_envs, dtype=torch.bool, device=self.device)
@@ -189,6 +200,10 @@ class HierarchicalRunner(BaseRunner):
 
         dones = torch.zeros(self.env.num_envs, dtype=torch.bool, device=self.device).unsqueeze(1)
 
+        low_return = 0
+        mid_return = 0
+        high_return = 0
+
         for it in range(self.current_learning_iteration, tot_iter):
             start = time.time()
             # Rollout
@@ -196,35 +211,38 @@ class HierarchicalRunner(BaseRunner):
                 with torch.inference_mode():
                     step = self.get_step(obs)[0]
                     hi = step % self.high_num_steps
-                    high_update = (train_step == self.num_steps_per_env - 1) #or dones[0]
-                    mid_update = (hi == self.high_num_steps - 1) #or dones[0]
-                    high_obs = self.get_high_obs(obs, mid_dones)
+                    high_update = (train_step == self.num_steps_per_env - 1)  # or dones[0]
+                    mid_update = (hi == self.high_num_steps - 1)  # or dones[0]
                     if hi == 0:
                         high_it[:] = hi
+                        high_obs = self.get_high_obs(obs, high_actions, mid_dones)
                         high_critic_obs = high_obs
                         high_actions = self.high_alg.act(high_obs, high_critic_obs)
-                        high_actions = self.env.map_high_actions(high_actions)
+                        high_actions[:] *= self.high_actions_scale
+                        # high_actions = self.env.map_high_actions(high_actions)
 
                     mi = step % self.mid_num_steps
                     cmi = (step % self.high_num_steps) // self.mid_num_steps
-                    mid_obs = self.get_mid_obs(obs, high_actions, low_dones)
                     if mi == 0:
                         mid_timeout[:] = mid_update
                         # mid_obs = mid_obs.view(self.env.num_envs, -1)[low_dones]
+                        mid_obs = self.get_mid_obs(obs, mid_actions, high_actions, low_dones)
                         mid_critic_obs = mid_obs
                         mid_actions = self.mid_alg.act(mid_obs, mid_critic_obs)
-                        mid_actions = self.env.map_mid_actions(mid_actions)
+                        mid_actions[:] *= self.mid_actions_scale
+                        # mid_actions = self.env.map_mid_actions(mid_actions)
 
                     cli = (step % self.high_num_steps) % self.mid_num_steps
-                    low_update = (cli == self.mid_num_steps - 1) #or dones[0]
+                    low_update = (cli == self.mid_num_steps - 1)  # or dones[0]
                     mid_update &= low_update
                     # for li in range(self.low_num_steps):
                     low_it[:] = cli
                     low_timeout[:] = low_update
                     mid_low_timeout = mid_timeout & low_timeout
-                    low_obs = self.get_low_obs(obs, mid_actions)
+                    low_obs = self.get_low_obs(obs, low_actions, mid_actions)
                     low_critic_obs = low_obs
                     low_actions = self.low_alg.act(low_obs, low_critic_obs)
+                    low_actions[:] *= self.low_actions_scale
                     # low_actions = self.env.map_low_actions(low_actions)
                     obs, privileged_obs, new_high_rewards, dones, infos = self.env.step(low_actions, high_actions,
                                                                                         mid_actions, low_timeout,
@@ -245,6 +263,7 @@ class HierarchicalRunner(BaseRunner):
                     try:
                         self.low_alg.process_env_step(low_rewards, low_dones, infos)
                     except:
+                        print('low')
                         print(step)
                         print(self.low_alg.storage.step)
 
@@ -252,7 +271,7 @@ class HierarchicalRunner(BaseRunner):
                         # Book keeping
                         if 'episode' in infos:
                             ep_infos.append(infos['episode'])
-                        cur_reward_sum += new_mid_rewards
+                        cur_reward_sum += new_high_rewards
                         cur_mid_rew_sum += new_mid_rewards
                         cur_low_rew_sum += low_rewards
                         cur_episode_length += 1
@@ -276,39 +295,52 @@ class HierarchicalRunner(BaseRunner):
                         cur_low_episode_length[low_new_ids] = 0
 
                     if low_update:
+                        low_return += 1
                         # if self.mid_alg.transition.critic_observations is None:
-                            # print(step.detach().cpu().numpy())
+                        # print(step.detach().cpu().numpy())
                         self.mid_alg.process_env_step(mid_rew_buf, mid_dones.unsqueeze(1), infos)
                         mid_rew_buf[:] = 0
+
+                    if low_return == self.low_batch_n:
                         self.low_alg.compute_returns(low_critic_obs)
 
                     if mid_update:
+                        mid_return += 1
                         high_add += 1
                         high_rew_buf += new_high_rewards.unsqueeze(1)
+
+                    if mid_return == self.mid_batch_n:
                         self.mid_alg.compute_returns(mid_critic_obs)
 
                     if high_update:
+                        high_return += 1
                         high_push += 1
                         try:
                             self.high_alg.process_env_step(high_rew_buf, high_dones.unsqueeze(1), infos)
                         except:
+                            print('high')
                             print('high_push: ', high_push)
                             print('high_add: ', high_add)
 
                         high_rew_buf[:] = 0
+
+                    if high_return == self.high_batch_n:
                         self.high_alg.compute_returns(high_critic_obs)
 
-                if low_update:
+                if low_return == self.low_batch_n:
                     lown += 1
                     low_value_loss, low_surrogate_loss = self.low_alg.update()
+                    low_return = 0
 
-                if mid_update:
+                if mid_return == self.mid_batch_n:
                     midn += 1
                     mid_value_loss, mid_surrogate_loss = self.mid_alg.update()
+                    mid_return = 0
 
-                if high_update:
+                if high_return == self.high_batch_n:
                     highn += 1
                     high_value_loss, high_surrogate_loss = self.high_alg.update()
+                    high_return = 0
 
             stop = time.time()
             collection_time = stop - start
@@ -452,15 +484,16 @@ class HierarchicalRunner(BaseRunner):
         self.current_learning_iteration = loaded_dict['iter']
         return loaded_dict['infos']
 
-    def get_high_obs(self, obs, mid_dones):
+    def get_high_obs(self, obs, high_actions, mid_dones):
         # t to tensor, with the same shape as mid_dones
-        return torch.cat([obs[..., self.high_obs_idx], mid_dones.unsqueeze(1)], dim=1)
+        return torch.cat([obs[..., self.high_obs_idx], high_actions, mid_dones.unsqueeze(1)], dim=1)
 
-    def get_mid_obs(self, obs, high_actions, low_dones):
-        return torch.cat([obs[..., self.mid_obs_idx], high_actions, low_dones.unsqueeze(1)], dim=1)
+    def get_mid_obs(self, obs, mid_actions, high_actions, low_dones):
+        return torch.cat(
+            [obs[..., self.mid_obs_idx], mid_actions, high_actions, low_dones.unsqueeze(1)], dim=1)
 
-    def get_low_obs(self, obs, mid_actions):
-        return torch.cat([obs[..., self.low_obs_idx], mid_actions], dim=1)
+    def get_low_obs(self, obs, low_actions, mid_actions):
+        return torch.cat([obs[..., self.low_obs_idx], low_actions, mid_actions], dim=1)
 
     def get_inference_policy(self, device=None):
         raise NotImplementedError
