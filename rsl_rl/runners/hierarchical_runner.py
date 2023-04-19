@@ -107,14 +107,14 @@ class HierarchicalRunner(BaseRunner):
         mid_actor_critic: ActorCritic = actor_critic_class(mid_num_obs,
                                                            mid_num_critic_obs,
                                                            mid_num_actions,
-                                                           action_activation='sigmoid',
+                                                           # action_activation='sigmoid',
                                                            **mid_policy_cfg).to(self.device)
         self.mid_alg: PPO = alg_class(mid_actor_critic, device=self.device, **self.alg_cfg)
 
         low_actor_critic: ActorCritic = actor_critic_class(low_num_obs,
                                                            low_num_critic_obs,
                                                            low_num_actions,
-                                                           action_activation='sigmoid',
+                                                           # action_activation='sigmoid',
                                                            **low_policy_cfg).to(self.device)
         self.low_alg: PPO = alg_class(low_actor_critic, device=self.device, **self.alg_cfg)
 
@@ -279,8 +279,8 @@ class HierarchicalRunner(BaseRunner):
                         cur_low_episode_length += 1
                         # TODO: this is not accurate
                         new_ids = ((high_update | dones) > 0).nonzero(as_tuple=False)
-                        low_new_ids = (low_update | dones > 0).nonzero(as_tuple=False)
-                        mid_new_ids = (mid_update | dones > 0).nonzero(as_tuple=False)
+                        low_new_ids = ((low_update | dones) > 0).nonzero(as_tuple=False)
+                        mid_new_ids = ((mid_update | dones) > 0).nonzero(as_tuple=False)
                         rewbuffer.extend(cur_reward_sum[new_ids][:, 0].cpu().numpy().tolist())
                         mid_rewbuffer.extend(cur_mid_rew_sum[mid_new_ids][:, 0].cpu().numpy().tolist())
                         low_rewbuffer.extend(cur_low_rew_sum[low_new_ids][:, 0].cpu().numpy().tolist())

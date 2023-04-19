@@ -70,6 +70,7 @@ class ActorCritic(nn.Module):
             actor_layers.append(get_activation(action_activation))
 
         self.actor = nn.Sequential(*actor_layers)
+        self.sigma_head = nn.Sequential(*actor_layers)
 
         # Value function
         critic_layers = []
@@ -87,11 +88,12 @@ class ActorCritic(nn.Module):
         print(f"Critic MLP: {self.critic}")
 
         # Action noise
-        self.std = nn.Parameter(init_noise_std * torch.ones(num_actions))
+        # self.std = nn.Parameter(init_noise_std * torch.ones(num_actions))
+        self.std = init_noise_std * torch.ones(num_actions)
         self.distribution = None
         # disable args validation for speedup
         Normal.set_default_validate_args = False
-        
+
         # seems that we get better performance without init
         # self.init_memory_weights(self.memory_a, 0.001, 0.)
         # self.init_memory_weights(self.memory_c, 0.001, 0.)
@@ -123,7 +125,11 @@ class ActorCritic(nn.Module):
 
     def update_distribution(self, observations):
         mean = self.actor(observations)
-        self.distribution = Normal(mean, mean*0. + self.std)
+        log_std = self.sigma_head(observations)
+        max_log_std, min_log_std = 2, -20
+        log_std = torch.clamp(log_std, min_log_std, max_log_std)
+        self.std = log_std.exp()
+        self.distribution = Normal(mean, mean * 0. + self.std)
 
     def act(self, observations, **kwargs):
         self.update_distribution(observations)
