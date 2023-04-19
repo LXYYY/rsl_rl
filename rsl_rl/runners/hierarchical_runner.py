@@ -496,7 +496,6 @@ class HierarchicalRunner(BaseRunner):
         return torch.cat([obs[..., self.low_obs_idx], low_actions, mid_actions], dim=1)
 
     def get_inference_policy(self, device=None):
-        raise NotImplementedError
         self.high_alg.actor_critic.eval()  # switch to evaluation
         self.mid_alg.actor_critic.eval()  # switch to evaluation
         self.low_alg.actor_critic.eval()  # switch to evaluation
@@ -506,25 +505,31 @@ class HierarchicalRunner(BaseRunner):
             self.mid_alg.actor_critic.to(device)
             self.high_alg.actor_critic.to(device)
 
-        def policy_fn(obs):
-            # Get the current high-level observation from the environment
-            high_obs = self.get_high_obs(obs).to(self.device)
+        def policy_fn(obs, high_actions, mid_dones, mid_actions, low_dones, low_actions):
+            step = self.get_step(obs)[0]
+            hi = step % self.high_num_steps
+            if hi == 0:
+                high_obs = self.get_high_obs(obs, high_actions, mid_dones)
+                high_critic_obs = high_obs
+                high_actions = self.high_alg.act(high_obs, high_critic_obs)
+                # high_actions[:] *= self.high_actions_scale
+                high_actions = self.env.map_high_actions(high_actions)
 
-            # Get the current mid-level observation from the environment
-            mid_obs = self.get_mid_obs(obs).to(self.device)
+            mi = step % self.mid_num_steps
+            if mi == 0:
+                # mid_obs = mid_obs.view(self.env.num_envs, -1)[low_dones]
+                mid_obs = self.get_mid_obs(obs, mid_actions, high_actions, low_dones)
+                mid_critic_obs = mid_obs
+                mid_actions = self.mid_alg.act(mid_obs, mid_critic_obs)
+                # mid_actions[:] *= self.mid_actions_scale
+                mid_actions = self.env.map_mid_actions(mid_actions)
 
-            # Get the current low-level observation from the environment
-            low_obs = self.env.get_observations().to(self.device)
+            low_obs = self.get_low_obs(obs, low_actions, mid_actions)
+            low_critic_obs = low_obs
+            low_actions = self.low_alg.act(low_obs, low_critic_obs)
+            # low_actions[:] *= self.low_actions_scale
+            low_actions = self.env.map_low_actions(low_actions)
 
-            # Get the current high-level action using the high-level policy function
-            high_act = self.high_alg.actor_critic.act_inference(high_obs.to(self.device))
-
-            # Get the current mid-level action using the mid-level policy function
-            mid_act = self.mid_alg.actor_critic.act_inference(torch.cat([mid_obs, high_act], dim=1))
-
-            # Generate the low-level action using the low-level policy function
-            low_act = self.low_alg.actor_critic.act_inference(torch.cat([low_obs, mid_act], dim=1))
-
-            return low_act
+            return high_actions, mid_actions, low_actions
 
         return policy_fn
