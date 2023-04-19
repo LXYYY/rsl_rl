@@ -46,7 +46,7 @@ class HierarchicalRunner(BaseRunner):
 
         super().__init__(env, train_cfg, log_dir, device)
 
-        self.high_batch_n = 5
+        self.high_batch_n = 3
         self.mid_batch_n = 3
         self.low_batch_n = 3
         self.high_actions_scale = 0.1
