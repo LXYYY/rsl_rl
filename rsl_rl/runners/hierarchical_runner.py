@@ -49,9 +49,6 @@ class HierarchicalRunner(BaseRunner):
         self.high_batch_n = 3
         self.mid_batch_n = 3
         self.low_batch_n = 3
-        self.high_actions_scale = 0.1
-        self.mid_actions_scale = 0.1
-        self.low_actions_scale = 1
 
     def init_networks(self):
         self.high_obs_idx = self.policy_cfg["high"]["obs_idx"]
@@ -101,20 +98,23 @@ class HierarchicalRunner(BaseRunner):
                                                             high_num_critic_obs,
                                                             high_num_actions,
                                                             action_activation='tanh',
+                                                            noise_std_max=0.2,
                                                             **high_policy_cfg).to(self.device)
         self.high_alg: PPO = alg_class(high_actor_critic, device=self.device, **self.alg_cfg)
 
         mid_actor_critic: ActorCritic = actor_critic_class(mid_num_obs,
                                                            mid_num_critic_obs,
                                                            mid_num_actions,
-                                                           # action_activation='sigmoid',
+                                                           action_activation='sigmoid',
+                                                           noise_std_max=0.2,
                                                            **mid_policy_cfg).to(self.device)
         self.mid_alg: PPO = alg_class(mid_actor_critic, device=self.device, **self.alg_cfg)
 
         low_actor_critic: ActorCritic = actor_critic_class(low_num_obs,
                                                            low_num_critic_obs,
                                                            low_num_actions,
-                                                           # action_activation='sigmoid',
+                                                           action_activation='sigmoid',
+                                                           noise_std_max=0.2,
                                                            **low_policy_cfg).to(self.device)
         self.low_alg: PPO = alg_class(low_actor_critic, device=self.device, **self.alg_cfg)
 
@@ -171,9 +171,9 @@ class HierarchicalRunner(BaseRunner):
         i_low = 0
         i_mid = 0
 
-        high_actions = torch.rand(self.env.num_envs, self.high_num_actions, dtype=torch.float32, device=self.device)
-        mid_actions = torch.rand(self.env.num_envs, self.mid_num_actions, dtype=torch.float32, device=self.device)
-        low_actions = torch.rand(self.env.num_envs, self.low_num_actions, dtype=torch.float32, device=self.device)
+        high_actions = torch.zeros(self.env.num_envs, self.high_num_actions, dtype=torch.float32, device=self.device)
+        mid_actions = torch.zeros(self.env.num_envs, self.mid_num_actions, dtype=torch.float32, device=self.device)
+        low_actions = torch.zeros(self.env.num_envs, self.low_num_actions, dtype=torch.float32, device=self.device)
         low_dones = torch.ones(self.env.num_envs, dtype=torch.bool, device=self.device)
         low_timeout = torch.ones(self.env.num_envs, dtype=torch.bool, device=self.device)
         mid_dones = torch.ones(self.env.num_envs, dtype=torch.bool, device=self.device)
@@ -404,6 +404,20 @@ class HierarchicalRunner(BaseRunner):
         self.writer.add_scalar('Perf/total_fps', fps, locs['it'])
         self.writer.add_scalar('Perf/collection time', locs['collection_time'], locs['it'])
         self.writer.add_scalar('Perf/learning_time', locs['learn_time'], locs['it'])
+
+        self.writer.add_histogram('Actions/low_act_0_dist', locs['low_actions'][0], locs['it'])
+        self.writer.add_histogram('Actions/low_act_1_dist', locs['low_actions'][1], locs['it'])
+        self.writer.add_histogram('Actions/low_act_2_dist', locs['low_actions'][2], locs['it'])
+
+        self.writer.add_histogram('Actions/mid_act_0_dist', locs['mid_actions'][0], locs['it'])
+        self.writer.add_histogram('Actions/mid_act_1_dist', locs['mid_actions'][1], locs['it'])
+        self.writer.add_histogram('Actions/mid_act_2_dist', locs['mid_actions'][2], locs['it'])
+
+        self.writer.add_histogram('Actions/high_act_pos_0_dist', locs['high_actions'][0], locs['it'])
+        self.writer.add_histogram('Actions/high_act_pos_1_dist', locs['high_actions'][1], locs['it'])
+        self.writer.add_histogram('Actions/high_act_vel_0_dist', locs['high_actions'][2], locs['it'])
+        self.writer.add_histogram('Actions/high_act_vel_1_dist', locs['high_actions'][3], locs['it'])
+
         if len(locs['rewbuffer']) > 0 and len(locs['lenbuffer']) > 0:
             self.writer.add_scalar('Train/mean_reward', statistics.mean(locs['rewbuffer']), locs['it'])
             self.writer.add_scalar('Train/mn_rew_mid', statistics.mean(locs['mid_rewbuffer']), locs['it'])
