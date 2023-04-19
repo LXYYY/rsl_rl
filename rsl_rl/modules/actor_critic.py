@@ -128,7 +128,7 @@ class ActorCritic(nn.Module):
         mean = self.actor(observations)
         std = self.std
         if self.max_std is not None:
-            std = torch.clamp(self.std, self.max_std)
+            std = torch.clamp(std, max=self.max_std)
         # self.std = max(self.std, self.max_std)
         self.distribution = Normal(mean, mean * 0. + std)
 

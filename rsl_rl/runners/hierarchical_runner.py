@@ -98,23 +98,23 @@ class HierarchicalRunner(BaseRunner):
                                                             high_num_critic_obs,
                                                             high_num_actions,
                                                             action_activation='tanh',
-                                                            noise_std_max=0.2,
+                                                            noise_std_max=5,
                                                             **high_policy_cfg).to(self.device)
         self.high_alg: PPO = alg_class(high_actor_critic, device=self.device, **self.alg_cfg)
 
         mid_actor_critic: ActorCritic = actor_critic_class(mid_num_obs,
                                                            mid_num_critic_obs,
                                                            mid_num_actions,
-                                                           action_activation='sigmoid',
-                                                           noise_std_max=0.2,
+                                                           action_activation='tanh',
+                                                           noise_std_max=5,
                                                            **mid_policy_cfg).to(self.device)
         self.mid_alg: PPO = alg_class(mid_actor_critic, device=self.device, **self.alg_cfg)
 
         low_actor_critic: ActorCritic = actor_critic_class(low_num_obs,
                                                            low_num_critic_obs,
                                                            low_num_actions,
-                                                           action_activation='sigmoid',
-                                                           noise_std_max=0.2,
+                                                           action_activation='tanh',
+                                                           noise_std_max=5,
                                                            **low_policy_cfg).to(self.device)
         self.low_alg: PPO = alg_class(low_actor_critic, device=self.device, **self.alg_cfg)
 
@@ -128,7 +128,7 @@ class HierarchicalRunner(BaseRunner):
                                   [low_num_actions])
 
     def get_step(self, obs):
-        return obs[:, -1]
+        return obs[0, -1].item()
 
     def learn(self, num_learning_iterations, init_at_random_ep_len=False):
         # initialize writer
@@ -209,7 +209,8 @@ class HierarchicalRunner(BaseRunner):
             # Rollout
             for train_step in range(self.num_steps_per_env):
                 with torch.inference_mode():
-                    step = self.get_step(obs)[0]
+                    step = self.get_step(obs)
+                    obs[:, -1] /= self.env.max_episode_length
                     hi = step % self.high_num_steps
                     high_update = (train_step == self.num_steps_per_env - 1)  # or dones[0]
                     mid_update = (hi == self.high_num_steps - 1)  # or dones[0]
@@ -260,12 +261,7 @@ class HierarchicalRunner(BaseRunner):
 
                     mid_rew_buf += new_mid_rewards.unsqueeze(1)
 
-                    try:
-                        self.low_alg.process_env_step(low_rewards, low_dones, infos)
-                    except:
-                        print('low')
-                        print(step)
-                        print(self.low_alg.storage.step)
+                    self.low_alg.process_env_step(low_rewards, low_dones, infos)
 
                     if self.log_dir is not None:
                         # Book keeping
@@ -315,12 +311,7 @@ class HierarchicalRunner(BaseRunner):
                     if high_update:
                         high_return += 1
                         high_push += 1
-                        try:
-                            self.high_alg.process_env_step(high_rew_buf, high_dones.unsqueeze(1), infos)
-                        except:
-                            print('high')
-                            print('high_push: ', high_push)
-                            print('high_add: ', high_add)
+                        self.high_alg.process_env_step(high_rew_buf, high_dones.unsqueeze(1), infos)
 
                         high_rew_buf[:] = 0
 
@@ -405,18 +396,18 @@ class HierarchicalRunner(BaseRunner):
         self.writer.add_scalar('Perf/collection time', locs['collection_time'], locs['it'])
         self.writer.add_scalar('Perf/learning_time', locs['learn_time'], locs['it'])
 
-        self.writer.add_histogram('Actions/low_act_0_dist', locs['low_actions'][0], locs['it'])
-        self.writer.add_histogram('Actions/low_act_1_dist', locs['low_actions'][1], locs['it'])
-        self.writer.add_histogram('Actions/low_act_2_dist', locs['low_actions'][2], locs['it'])
+        self.writer.add_histogram('Actions/low_act_0_dist', locs['low_actions'][..., 0], locs['it'])
+        self.writer.add_histogram('Actions/low_act_1_dist', locs['low_actions'][..., 1], locs['it'])
+        self.writer.add_histogram('Actions/low_act_2_dist', locs['low_actions'][..., 2], locs['it'])
 
-        self.writer.add_histogram('Actions/mid_act_0_dist', locs['mid_actions'][0], locs['it'])
-        self.writer.add_histogram('Actions/mid_act_1_dist', locs['mid_actions'][1], locs['it'])
-        self.writer.add_histogram('Actions/mid_act_2_dist', locs['mid_actions'][2], locs['it'])
+        self.writer.add_histogram('Actions/mid_act_0_dist', locs['mid_actions'][..., 0], locs['it'])
+        self.writer.add_histogram('Actions/mid_act_1_dist', locs['mid_actions'][..., 1], locs['it'])
+        self.writer.add_histogram('Actions/mid_act_2_dist', locs['mid_actions'][..., 2], locs['it'])
 
-        self.writer.add_histogram('Actions/high_act_pos_0_dist', locs['high_actions'][0], locs['it'])
-        self.writer.add_histogram('Actions/high_act_pos_1_dist', locs['high_actions'][1], locs['it'])
-        self.writer.add_histogram('Actions/high_act_vel_0_dist', locs['high_actions'][2], locs['it'])
-        self.writer.add_histogram('Actions/high_act_vel_1_dist', locs['high_actions'][3], locs['it'])
+        self.writer.add_histogram('Actions/high_act_pos_0_dist', locs['high_actions'][..., 0], locs['it'])
+        self.writer.add_histogram('Actions/high_act_pos_1_dist', locs['high_actions'][..., 1], locs['it'])
+        self.writer.add_histogram('Actions/high_act_vel_0_dist', locs['high_actions'][..., 2], locs['it'])
+        self.writer.add_histogram('Actions/high_act_vel_1_dist', locs['high_actions'][..., 3], locs['it'])
 
         if len(locs['rewbuffer']) > 0 and len(locs['lenbuffer']) > 0:
             self.writer.add_scalar('Train/mean_reward', statistics.mean(locs['rewbuffer']), locs['it'])
