@@ -510,10 +510,11 @@ class HierarchicalRunner(BaseRunner):
             self.mid_alg.actor_critic.to(device)
             self.high_alg.actor_critic.to(device)
 
-        def policy_fn(obs, high_actions, mid_dones, mid_actions, low_dones, low_actions):
+        def policy_fn(obs, high_actions, mid_dones, mid_actions, low_dones, low_actions, low_timeout, mid_timeout):
             step = self.get_step(obs)
             obs[:, -1] /= self.env.max_episode_length
             hi = step % self.high_num_steps
+            mid_update = (hi == self.high_num_steps - 1)  # or dones[0]
             if hi == 0:
                 high_obs = self.get_high_obs(obs, high_actions, mid_dones)
                 high_critic_obs = high_obs
@@ -530,12 +531,19 @@ class HierarchicalRunner(BaseRunner):
                 # mid_actions[:] *= self.mid_actions_scale
                 mid_actions = self.env.map_mid_actions(mid_actions)
 
+            cli = (step % self.high_num_steps) % self.mid_num_steps
+            low_update = (cli == self.mid_num_steps - 1)  # or dones[0]
+            mid_update &= low_update
+            mid_timeout[:] = mid_update
+            # for li in range(self.low_num_steps):
+            low_timeout[:] = low_update
+
             low_obs = self.get_low_obs(obs, low_actions, mid_actions)
             low_critic_obs = low_obs
             low_actions = self.low_alg.act(low_obs, low_critic_obs)
             # low_actions[:] *= self.low_actions_scale
             low_actions = self.env.map_low_actions(low_actions)
 
-            return high_actions, mid_actions, low_actions
+            return high_actions, mid_actions, low_actions, mid_timeout, low_timeout
 
         return policy_fn
