@@ -46,8 +46,13 @@ class ActorCritic(nn.Module):
                  critic_hidden_dims=[256, 256, 256],
                  activation='elu',
                  init_noise_std=1.0,
-                 noise_std_max=None,
                  action_activation=None,
+                 action_range=None,
+                 action_scale=1.,
+                 clip_ratio_threshold=0.1,
+                 max_std=1.0,
+                 min_std=1e-6,
+                 std_mode='learned',
                  **kwargs):
         if kwargs:
             print("ActorCritic.__init__ got unexpected arguments, which will be ignored: " + str(
@@ -90,11 +95,23 @@ class ActorCritic(nn.Module):
         print(f"Critic MLP: {self.critic}")
 
         # Action noise
-        self.std = nn.Parameter(init_noise_std * torch.ones(num_actions))
-        self.max_std = noise_std_max
+        if std_mode == 'learned':
+            self.std = nn.Parameter(init_noise_std * torch.ones(num_actions))
+        else:
+            self.std = torch.tensor(init_noise_std).float()
+        self.max_std = max_std
+        self.min_std = min_std
+        self.std_mode = std_mode
+        self.clip_ratio_threshold = clip_ratio_threshold
         self.distribution = None
         # disable args validation for speedup
         Normal.set_default_validate_args = False
+
+        if action_range is not None:
+            self.action_range = action_range
+        self.action_scale = action_scale
+
+        self.clip_ratio = 0.0
 
         # seems that we get better performance without init
         # self.init_memory_weights(self.memory_a, 0.001, 0.)
@@ -124,17 +141,40 @@ class ActorCritic(nn.Module):
     def entropy(self):
         return self.distribution.entropy().sum(dim=-1)
 
+    def clip_actions(self, actions):
+        actions *= self.action_scale
+        if hasattr(self, 'action_range'):
+            actions = torch.clamp(actions, -1, 1)
+            num_clipped_actions = ((actions == -1) | (actions == 1)).sum().item()
+            actions = actions * (self.action_range[1] - self.action_range[0]) / 2. + (
+                    self.action_range[1] + self.action_range[0]) / 2.
+            if self.std_mode == 'adaptive':
+                total_actions = actions.shape[0] * actions.shape[1]
+                self.clip_ratio = num_clipped_actions / total_actions
+
+                # Update noise_std based on the clip_ratio
+                if self.clip_ratio < self.clip_ratio_threshold:
+                    # self.std *= 1.1
+                    pass
+                else:
+                    self.std *= 0.9
+                # print clip ratio and std
+                # print('clip ratio: ', clip_ratio, 'std: ', self.std)
+            return actions
+        else:
+            return actions
+
     def update_distribution(self, observations):
         mean = self.actor(observations)
-        std = self.std
-        if self.max_std is not None:
-            std = torch.clamp(std, max=self.max_std)
-        # self.std = max(self.std, self.max_std)
-        self.distribution = Normal(mean, mean * 0. + std)
+        if self.std_mode == 'adaptive':
+            self.std = torch.clip(self.std, min=self.min_std)
+        self.distribution = Normal(mean, mean * 0. + self.std)
 
     def act(self, observations, **kwargs):
         self.update_distribution(observations)
-        return self.distribution.sample()
+        actions = self.distribution.sample()
+        actions = self.clip_actions(actions)
+        return actions
 
     def get_actions_log_prob(self, actions):
         return self.distribution.log_prob(actions).sum(dim=-1)

@@ -94,27 +94,35 @@ class HierarchicalRunner(BaseRunner):
         del self.policy_cfg["mid"]
         del self.policy_cfg["low"]
 
+        min_a = torch.tensor([0.6, -0.5, -2, -2], device=self.device)
+        max_a = torch.tensor([1.5, 0.5, 2, 2], device=self.device)
+
         high_actor_critic: ActorCritic = actor_critic_class(high_num_obs,
                                                             high_num_critic_obs,
                                                             high_num_actions,
-                                                            # action_activation='tanh',
-                                                            # noise_std_max=5,
+                                                            action_range=(min_a, max_a),
+                                                            action_scale=0.002,
+                                                            max_std=200,
                                                             **high_policy_cfg).to(self.device)
         self.high_alg: PPO = alg_class(high_actor_critic, device=self.device, **self.alg_cfg)
+
 
         mid_actor_critic: ActorCritic = actor_critic_class(mid_num_obs,
                                                            mid_num_critic_obs,
                                                            mid_num_actions,
-                                                           # action_activation='tanh',
-                                                           # noise_std_max=5,
+                                                           action_range=(-3.14, 3.14),
+                                                           action_scale=0.002,
+                                                           max_std=200,
                                                            **mid_policy_cfg).to(self.device)
         self.mid_alg: PPO = alg_class(mid_actor_critic, device=self.device, **self.alg_cfg)
 
         low_actor_critic: ActorCritic = actor_critic_class(low_num_obs,
                                                            low_num_critic_obs,
                                                            low_num_actions,
-                                                           # action_activation='tanh',
-                                                           # noise_std_max=5,
+                                                           action_range=(-200, 200),
+                                                           action_scale=0.002,
+                                                           min_std=30,
+                                                           # std_mode='adaptive',
                                                            **low_policy_cfg).to(self.device)
         self.low_alg: PPO = alg_class(low_actor_critic, device=self.device, **self.alg_cfg)
 
@@ -220,7 +228,7 @@ class HierarchicalRunner(BaseRunner):
                         high_critic_obs = high_obs
                         high_actions = self.high_alg.act(high_obs, high_critic_obs)
                         # high_actions[:] *= self.high_actions_scale
-                        high_actions = self.env.map_high_actions(high_actions)
+                        # high_actions = self.env.map_high_actions(high_actions)
 
                     mi = step % self.mid_num_steps
                     cmi = (step % self.high_num_steps) // self.mid_num_steps
@@ -230,7 +238,7 @@ class HierarchicalRunner(BaseRunner):
                         mid_critic_obs = mid_obs
                         mid_actions = self.mid_alg.act(mid_obs, mid_critic_obs)
                         # mid_actions[:] *= self.mid_actions_scale
-                        mid_actions = self.env.map_mid_actions(mid_actions)
+                        # mid_actions = self.env.map_mid_actions(mid_actions)
 
                     cli = (step % self.high_num_steps) % self.mid_num_steps
                     low_update = (cli == self.mid_num_steps - 1)  # or dones[0]
@@ -244,7 +252,7 @@ class HierarchicalRunner(BaseRunner):
                     low_critic_obs = low_obs
                     low_actions = self.low_alg.act(low_obs, low_critic_obs)
                     # low_actions[:] *= self.low_actions_scale
-                    low_actions = self.env.map_low_actions(low_actions)
+                    # low_actions = self.env.map_low_actions(low_actions)
                     obs, privileged_obs, new_high_rewards, dones, infos = self.env.step(low_actions, high_actions,
                                                                                         mid_actions, low_timeout,
                                                                                         mid_timeout)
@@ -392,6 +400,7 @@ class HierarchicalRunner(BaseRunner):
         self.writer.add_scalar('Policy/high/mean_noise_std', high_mean_std.item(), locs['it'])
         self.writer.add_scalar('Policy/mid/mean_noise_std', mid_mean_std.item(), locs['it'])
         self.writer.add_scalar('Policy/low/mean_noise_std', low_mean_std.item(), locs['it'])
+        self.writer.add_scalar('Policy/low/clip_ratio', self.low_alg.clip_ratio, locs['it'])
         self.writer.add_scalar('Perf/total_fps', fps, locs['it'])
         self.writer.add_scalar('Perf/collection time', locs['collection_time'], locs['it'])
         self.writer.add_scalar('Perf/learning_time', locs['learn_time'], locs['it'])
