@@ -97,24 +97,24 @@ class HierarchicalRunner(BaseRunner):
         high_actor_critic: ActorCritic = actor_critic_class(high_num_obs,
                                                             high_num_critic_obs,
                                                             high_num_actions,
-                                                            action_activation='tanh',
-                                                            noise_std_max=5,
+                                                            # action_activation='tanh',
+                                                            # noise_std_max=5,
                                                             **high_policy_cfg).to(self.device)
         self.high_alg: PPO = alg_class(high_actor_critic, device=self.device, **self.alg_cfg)
 
         mid_actor_critic: ActorCritic = actor_critic_class(mid_num_obs,
                                                            mid_num_critic_obs,
                                                            mid_num_actions,
-                                                           action_activation='tanh',
-                                                           noise_std_max=5,
+                                                           # action_activation='tanh',
+                                                           # noise_std_max=5,
                                                            **mid_policy_cfg).to(self.device)
         self.mid_alg: PPO = alg_class(mid_actor_critic, device=self.device, **self.alg_cfg)
 
         low_actor_critic: ActorCritic = actor_critic_class(low_num_obs,
                                                            low_num_critic_obs,
                                                            low_num_actions,
-                                                           action_activation='tanh',
-                                                           noise_std_max=5,
+                                                           # action_activation='tanh',
+                                                           # noise_std_max=5,
                                                            **low_policy_cfg).to(self.device)
         self.low_alg: PPO = alg_class(low_actor_critic, device=self.device, **self.alg_cfg)
 
@@ -511,7 +511,8 @@ class HierarchicalRunner(BaseRunner):
             self.high_alg.actor_critic.to(device)
 
         def policy_fn(obs, high_actions, mid_dones, mid_actions, low_dones, low_actions):
-            step = self.get_step(obs)[0]
+            step = self.get_step(obs)
+            obs[:, -1] /= self.env.max_episode_length
             hi = step % self.high_num_steps
             if hi == 0:
                 high_obs = self.get_high_obs(obs, high_actions, mid_dones)
