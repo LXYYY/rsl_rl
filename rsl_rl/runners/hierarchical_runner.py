@@ -104,7 +104,7 @@ class HierarchicalRunner(BaseRunner):
                                                             action_scale=0.002,
                                                             max_std=200,
                                                             **high_policy_cfg).to(self.device)
-        self.high_alg: PPO = alg_class(high_actor_critic, device=self.device, **self.alg_cfg)
+        self.high_alg: PPO = alg_class(high_actor_critic, device=self.device, **self.alg_cfg['high'])
 
 
         mid_actor_critic: ActorCritic = actor_critic_class(mid_num_obs,
@@ -114,7 +114,7 @@ class HierarchicalRunner(BaseRunner):
                                                            action_scale=0.002,
                                                            max_std=200,
                                                            **mid_policy_cfg).to(self.device)
-        self.mid_alg: PPO = alg_class(mid_actor_critic, device=self.device, **self.alg_cfg)
+        self.mid_alg: PPO = alg_class(mid_actor_critic, device=self.device, **self.alg_cfg['mid'])
 
         low_actor_critic: ActorCritic = actor_critic_class(low_num_obs,
                                                            low_num_critic_obs,
@@ -124,7 +124,7 @@ class HierarchicalRunner(BaseRunner):
                                                            min_std=30,
                                                            # std_mode='adaptive',
                                                            **low_policy_cfg).to(self.device)
-        self.low_alg: PPO = alg_class(low_actor_critic, device=self.device, **self.alg_cfg)
+        self.low_alg: PPO = alg_class(low_actor_critic, device=self.device, **self.alg_cfg['low'])
 
         self.high_alg.init_storage(self.env.num_envs, high_num_steps_per_env, [high_num_obs], [high_num_critic_obs],
                                    [high_num_actions])
