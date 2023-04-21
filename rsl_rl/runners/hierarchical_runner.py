@@ -102,19 +102,24 @@ class HierarchicalRunner(BaseRunner):
                                                             high_num_actions,
                                                             action_range=(min_a, max_a),
                                                             action_scale=0.002,
-                                                            max_std=200,
+                                                            min_std=50,
+                                                            std_mode=2,
+                                                            down_std_action_dim=self.mid_num_actions,
                                                             **high_policy_cfg).to(self.device)
+        high_actor_critic.upp_std_coeff = high_actor_critic.upp_std_coeff.to(self.device)
         self.high_alg: PPO = alg_class(high_actor_critic, device=self.device, **self.alg_cfg['high'])
-
 
         mid_actor_critic: ActorCritic = actor_critic_class(mid_num_obs,
                                                            mid_num_critic_obs,
                                                            mid_num_actions,
                                                            action_range=(-3.14, 3.14),
                                                            action_scale=0.002,
-                                                           max_std=200,
+                                                           min_std=50,
+                                                           std_mode=2,
+                                                           down_std_action_dim=self.low_num_actions,
                                                            **mid_policy_cfg).to(self.device)
         self.mid_alg: PPO = alg_class(mid_actor_critic, device=self.device, **self.alg_cfg['mid'])
+        mid_actor_critic.upp_std_coeff = mid_actor_critic.upp_std_coeff.to(self.device)
 
         low_actor_critic: ActorCritic = actor_critic_class(low_num_obs,
                                                            low_num_critic_obs,
@@ -122,9 +127,11 @@ class HierarchicalRunner(BaseRunner):
                                                            action_range=(-200, 200),
                                                            action_scale=0.002,
                                                            min_std=30,
+                                                           std_mode=2,
                                                            # std_mode='adaptive',
                                                            **low_policy_cfg).to(self.device)
         self.low_alg: PPO = alg_class(low_actor_critic, device=self.device, **self.alg_cfg['low'])
+        low_actor_critic.upp_std_coeff = low_actor_critic.upp_std_coeff.to(self.device)
 
         self.high_alg.init_storage(self.env.num_envs, high_num_steps_per_env, [high_num_obs], [high_num_critic_obs],
                                    [high_num_actions])
@@ -334,11 +341,13 @@ class HierarchicalRunner(BaseRunner):
                 if mid_return == self.mid_batch_n:
                     midn += 1
                     mid_value_loss, mid_surrogate_loss = self.mid_alg.update()
+                    self.low_alg.actor_critic.update_upp_std_coeff(self.mid_alg.actor_critic.down_std_coeff)
                     mid_return = 0
 
                 if high_return == self.high_batch_n:
                     highn += 1
                     high_value_loss, high_surrogate_loss = self.high_alg.update()
+                    self.mid_alg.actor_critic.update_upp_std_coeff(self.high_alg.actor_critic.down_std_coeff)
                     high_return = 0
 
             stop = time.time()
@@ -386,6 +395,9 @@ class HierarchicalRunner(BaseRunner):
         high_mean_std = self.high_alg.actor_critic.std.mean()
         mid_mean_std = self.mid_alg.actor_critic.std.mean()
         low_mean_std = self.low_alg.actor_critic.std.mean()
+
+        mid_upp_std_coeff = self.mid_alg.actor_critic.upp_std_coeff.mean()
+        low_upp_std_coeff = self.low_alg.actor_critic.upp_std_coeff.mean()
         fps = int(self.num_steps_per_env * self.env.num_envs / (locs['collection_time'] + locs['learn_time']))
 
         self.writer.add_scalar('Loss/high/value_function', locs['high_value_loss'], locs['it'])
@@ -400,7 +412,9 @@ class HierarchicalRunner(BaseRunner):
         self.writer.add_scalar('Policy/high/mean_noise_std', high_mean_std.item(), locs['it'])
         self.writer.add_scalar('Policy/mid/mean_noise_std', mid_mean_std.item(), locs['it'])
         self.writer.add_scalar('Policy/low/mean_noise_std', low_mean_std.item(), locs['it'])
-        self.writer.add_scalar('Policy/low/clip_ratio', self.low_alg.clip_ratio, locs['it'])
+
+        self.writer.add_scalar('Policy/low/upp_std_coeff', low_upp_std_coeff.item(), locs['it'])
+        self.writer.add_scalar('Policy/mid/upp_std_coeff', mid_upp_std_coeff.item(), locs['it'])
         self.writer.add_scalar('Perf/total_fps', fps, locs['it'])
         self.writer.add_scalar('Perf/collection time', locs['collection_time'], locs['it'])
         self.writer.add_scalar('Perf/learning_time', locs['learn_time'], locs['it'])

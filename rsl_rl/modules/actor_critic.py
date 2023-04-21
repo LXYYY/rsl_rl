@@ -50,9 +50,10 @@ class ActorCritic(nn.Module):
                  action_range=None,
                  action_scale=1.,
                  clip_ratio_threshold=0.1,
-                 max_std=1.0,
                  min_std=1e-6,
-                 std_mode='learned',
+                 std_mode=1,
+                 min_upp_std_coeff=0.1,
+                 down_std_action_dim=None,
                  **kwargs):
         if kwargs:
             print("ActorCritic.__init__ got unexpected arguments, which will be ignored: " + str(
@@ -95,11 +96,7 @@ class ActorCritic(nn.Module):
         print(f"Critic MLP: {self.critic}")
 
         # Action noise
-        if std_mode == 'learned':
-            self.std = nn.Parameter(init_noise_std * torch.ones(num_actions))
-        else:
-            self.std = torch.tensor(init_noise_std).float()
-        self.max_std = max_std
+        self.std = nn.Parameter(init_noise_std * torch.ones(num_actions))
         self.min_std = min_std
         self.std_mode = std_mode
         self.clip_ratio_threshold = clip_ratio_threshold
@@ -113,9 +110,27 @@ class ActorCritic(nn.Module):
 
         self.clip_ratio = 0.0
 
+        if down_std_action_dim is not None:
+            self.down_std_action_dim = down_std_action_dim
+            self.down_std_coeff_param = nn.Parameter(torch.zeros(self.down_std_action_dim))
+
+        self.min_upp_std_coeff = min_upp_std_coeff
+
+        self.upp_std_coeff = torch.ones(num_actions)
+
         # seems that we get better performance without init
         # self.init_memory_weights(self.memory_a, 0.001, 0.)
         # self.init_memory_weights(self.memory_c, 0.001, 0.)
+
+    @property
+    def down_std_coeff(self):
+        if self.down_std_action_dim is not None:
+            return torch.sigmoid(self.down_std_coeff_param).detach() * 5.
+        else:
+            return None
+
+    def update_upp_std_coeff(self, upp_std_coeff):
+        self.upp_std_coeff = torch.clamp(upp_std_coeff, min=self.min_upp_std_coeff)
 
     @staticmethod
     # not used at the moment
@@ -145,30 +160,22 @@ class ActorCritic(nn.Module):
         actions *= self.action_scale
         if hasattr(self, 'action_range'):
             actions = torch.clamp(actions, -1, 1)
-            num_clipped_actions = ((actions == -1) | (actions == 1)).sum().item()
-            actions = actions * (self.action_range[1] - self.action_range[0]) / 2. + (
-                    self.action_range[1] + self.action_range[0]) / 2.
-            if self.std_mode == 'adaptive':
-                total_actions = actions.shape[0] * actions.shape[1]
-                self.clip_ratio = num_clipped_actions / total_actions
+            clipped_index = (actions == -1) | (actions == 1)
+            interval = (self.action_range[1] - self.action_range[0]) / 2.
+            mid = (self.action_range[1] + self.action_range[0]) / 2.
+            actions = actions * interval + mid
+            if self.std_mode == 2:
+                random_actions = torch.randn_like(actions) * interval * 2 + mid
+                actions[clipped_index] = random_actions[clipped_index]
 
-                # Update noise_std based on the clip_ratio
-                if self.clip_ratio < self.clip_ratio_threshold:
-                    # self.std *= 1.1
-                    pass
-                else:
-                    self.std *= 0.9
-                # print clip ratio and std
-                # print('clip ratio: ', clip_ratio, 'std: ', self.std)
             return actions
         else:
             return actions
 
     def update_distribution(self, observations):
         mean = self.actor(observations)
-        if self.std_mode == 'adaptive':
-            self.std = torch.clip(self.std, min=self.min_std)
-        self.distribution = Normal(mean, mean * 0. + self.std)
+        std = self.std * self.upp_std_coeff
+        self.distribution = Normal(mean, mean * 0. + std)
 
     def act(self, observations, **kwargs):
         self.update_distribution(observations)
