@@ -47,11 +47,7 @@ class ActorCritic(nn.Module):
                  activation='elu',
                  init_noise_std=1.0,
                  action_activation=None,
-                 action_range=None,
-                 action_scale=1.,
-                 clip_ratio_threshold=0.1,
                  min_std=1e-6,
-                 std_mode=1,
                  min_upp_std_coeff=0.1,
                  down_std_action_dim=None,
                  **kwargs):
@@ -98,17 +94,9 @@ class ActorCritic(nn.Module):
         # Action noise
         self.std = nn.Parameter(init_noise_std * torch.ones(num_actions))
         self.min_std = min_std
-        self.std_mode = std_mode
-        self.clip_ratio_threshold = clip_ratio_threshold
         self.distribution = None
         # disable args validation for speedup
         Normal.set_default_validate_args = False
-
-        if action_range is not None:
-            self.action_range = action_range
-        self.action_scale = action_scale
-
-        self.clip_ratio = 0.0
 
         if down_std_action_dim is not None:
             self.down_std_action_dim = down_std_action_dim
@@ -125,7 +113,7 @@ class ActorCritic(nn.Module):
     @property
     def down_std_coeff(self):
         if self.down_std_action_dim is not None:
-            return torch.sigmoid(self.down_std_coeff_param).detach() * 5.
+            return torch.sigmoid(self.down_std_coeff_param).detach() * 2.
         else:
             return None
 
@@ -156,22 +144,6 @@ class ActorCritic(nn.Module):
     def entropy(self):
         return self.distribution.entropy().sum(dim=-1)
 
-    def clip_actions(self, actions):
-        actions *= self.action_scale
-        if hasattr(self, 'action_range'):
-            actions = torch.clamp(actions, -1, 1)
-            clipped_index = (actions == -1) | (actions == 1)
-            interval = (self.action_range[1] - self.action_range[0]) / 2.
-            mid = (self.action_range[1] + self.action_range[0]) / 2.
-            actions = actions * interval + mid
-            if self.std_mode == 2:
-                random_actions = torch.randn_like(actions) * interval * 2 + mid
-                actions[clipped_index] = random_actions[clipped_index]
-
-            return actions
-        else:
-            return actions
-
     def update_distribution(self, observations):
         mean = self.actor(observations)
         std = self.std * self.upp_std_coeff
@@ -180,7 +152,6 @@ class ActorCritic(nn.Module):
     def act(self, observations, **kwargs):
         self.update_distribution(observations)
         actions = self.distribution.sample()
-        actions = self.clip_actions(actions)
         return actions
 
     def get_actions_log_prob(self, actions):

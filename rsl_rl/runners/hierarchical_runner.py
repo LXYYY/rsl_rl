@@ -94,16 +94,10 @@ class HierarchicalRunner(BaseRunner):
         del self.policy_cfg["mid"]
         del self.policy_cfg["low"]
 
-        min_a = torch.tensor([0.6, -0.5, -2, -2], device=self.device)
-        max_a = torch.tensor([1.5, 0.5, 2, 2], device=self.device)
-
         high_actor_critic: ActorCritic = actor_critic_class(high_num_obs,
                                                             high_num_critic_obs,
                                                             high_num_actions,
-                                                            action_range=(min_a, max_a),
-                                                            action_scale=0.002,
-                                                            min_std=50,
-                                                            std_mode=2,
+                                                            min_std=1,
                                                             down_std_action_dim=self.mid_num_actions,
                                                             **high_policy_cfg).to(self.device)
         high_actor_critic.upp_std_coeff = high_actor_critic.upp_std_coeff.to(self.device)
@@ -112,10 +106,7 @@ class HierarchicalRunner(BaseRunner):
         mid_actor_critic: ActorCritic = actor_critic_class(mid_num_obs,
                                                            mid_num_critic_obs,
                                                            mid_num_actions,
-                                                           action_range=(-3.14, 3.14),
-                                                           action_scale=0.002,
-                                                           min_std=50,
-                                                           std_mode=2,
+                                                           min_std=1,
                                                            down_std_action_dim=self.low_num_actions,
                                                            **mid_policy_cfg).to(self.device)
         self.mid_alg: PPO = alg_class(mid_actor_critic, device=self.device, **self.alg_cfg['mid'])
@@ -124,10 +115,7 @@ class HierarchicalRunner(BaseRunner):
         low_actor_critic: ActorCritic = actor_critic_class(low_num_obs,
                                                            low_num_critic_obs,
                                                            low_num_actions,
-                                                           action_range=(-200, 200),
-                                                           action_scale=0.002,
-                                                           min_std=30,
-                                                           std_mode=2,
+                                                           min_std=1,
                                                            # std_mode='adaptive',
                                                            **low_policy_cfg).to(self.device)
         self.low_alg: PPO = alg_class(low_actor_critic, device=self.device, **self.alg_cfg['low'])
@@ -219,6 +207,9 @@ class HierarchicalRunner(BaseRunner):
         mid_return = 0
         high_return = 0
 
+        min_a = torch.tensor([0.6, -0.5, -2, -2], device=self.device)
+        max_a = torch.tensor([1.5, 0.5, 2, 2], device=self.device)
+
         for it in range(self.current_learning_iteration, tot_iter):
             start = time.time()
             # Rollout
@@ -235,7 +226,7 @@ class HierarchicalRunner(BaseRunner):
                         high_critic_obs = high_obs
                         high_actions = self.high_alg.act(high_obs, high_critic_obs)
                         # high_actions[:] *= self.high_actions_scale
-                        # high_actions = self.env.map_high_actions(high_actions)
+                        high_actions = self.clip_action(high_actions, (min_a, max_a), 0.1)
 
                     mi = step % self.mid_num_steps
                     cmi = (step % self.high_num_steps) // self.mid_num_steps
@@ -245,7 +236,7 @@ class HierarchicalRunner(BaseRunner):
                         mid_critic_obs = mid_obs
                         mid_actions = self.mid_alg.act(mid_obs, mid_critic_obs)
                         # mid_actions[:] *= self.mid_actions_scale
-                        # mid_actions = self.env.map_mid_actions(mid_actions)
+                        mid_actions = self.clip_action(mid_actions, (-3.14, 3.14), 0.1)
 
                     cli = (step % self.high_num_steps) % self.mid_num_steps
                     low_update = (cli == self.mid_num_steps - 1)  # or dones[0]
@@ -258,8 +249,7 @@ class HierarchicalRunner(BaseRunner):
                     low_obs = self.get_low_obs(obs, low_actions, mid_actions)
                     low_critic_obs = low_obs
                     low_actions = self.low_alg.act(low_obs, low_critic_obs)
-                    # low_actions[:] *= self.low_actions_scale
-                    # low_actions = self.env.map_low_actions(low_actions)
+                    low_actions = self.clip_action(low_actions, (-400, 400), 1)
                     obs, privileged_obs, new_high_rewards, dones, infos = self.env.step(low_actions, high_actions,
                                                                                         mid_actions, low_timeout,
                                                                                         mid_timeout)
@@ -570,3 +560,8 @@ class HierarchicalRunner(BaseRunner):
             return high_actions, mid_actions, low_actions, mid_timeout, low_timeout
 
         return policy_fn
+
+    def clip_action(self, actions, range, scale):
+        actions *= scale
+        clipped_actions = torch.clamp(actions, range[0], range[1])
+        return clipped_actions

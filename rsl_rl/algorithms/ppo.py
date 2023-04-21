@@ -80,11 +80,6 @@ class PPO:
         self.max_grad_norm = max_grad_norm
         self.use_clipped_value_loss = use_clipped_value_loss
 
-    @property
-    def clip_ratio(self):
-        return self.actor_critic.clip_ratio
-
-
     def init_storage(self, num_envs, num_transitions_per_env, actor_obs_shape, critic_obs_shape, action_shape):
         self.storage = RolloutStorage(num_envs, num_transitions_per_env, actor_obs_shape, critic_obs_shape,
                                       action_shape, self.device)
@@ -194,6 +189,11 @@ class PPO:
             # Gradient step
             self.optimizer.zero_grad()
             loss.backward()
+            # for param in self.actor_critic.parameters():
+            #     if param.grad is not None and torch.isnan(param.grad).any():
+            #         traceback.print_stack()
+            #         param.grad.data = torch.where(torch.isnan(param.grad.data), torch.zeros_like(param.grad.data),
+            #                                       param.grad.data)
             nn.utils.clip_grad_norm_(self.actor_critic.parameters(), self.max_grad_norm)
             self.optimizer.step()
 
