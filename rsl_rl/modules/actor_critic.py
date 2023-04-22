@@ -106,6 +106,8 @@ class ActorCritic(nn.Module):
 
         self.upp_std_coeff = torch.ones(num_actions)
 
+        self.std_coeff = torch.ones(num_actions)
+
         # seems that we get better performance without init
         # self.init_memory_weights(self.memory_a, 0.001, 0.)
         # self.init_memory_weights(self.memory_c, 0.001, 0.)
@@ -144,10 +146,14 @@ class ActorCritic(nn.Module):
     def entropy(self):
         return self.distribution.entropy().sum(dim=-1)
 
+    def update_std_coeff(self, std_coeff):
+        self.std_coeff[:] = std_coeff
+
     def update_distribution(self, observations):
         mean = self.actor(observations)
         std = self.std * self.upp_std_coeff
-        self.distribution = Normal(mean, mean * 0. + std)
+        self.wstd = torch.exp(std) * self.std_coeff
+        self.distribution = Normal(mean, mean * 0. + self.wstd)
 
     def act(self, observations, **kwargs):
         self.update_distribution(observations)
