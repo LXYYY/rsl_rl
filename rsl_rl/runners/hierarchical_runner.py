@@ -119,7 +119,7 @@ class HierarchicalRunner(BaseRunner):
         low_actor_critic: ActorCritic = actor_critic_class(low_num_obs,
                                                            low_num_critic_obs,
                                                            low_num_actions,
-                                                           action_activation='tanh',
+                                                           # action_activation='tanh',
                                                            min_std=1,
                                                            # std_mode='adaptive',
                                                            **low_policy_cfg).to(self.device)
@@ -216,12 +216,14 @@ class HierarchicalRunner(BaseRunner):
         min_a = torch.tensor([0.6, -0.5, -2, -2], device=self.device)
         max_a = torch.tensor([1.5, 0.5, 2, 2], device=self.device)
 
+        step = 0
+
         for it in range(self.current_learning_iteration, tot_iter):
             start = time.time()
             # Rollout
             for train_step in range(self.num_steps_per_env):
                 with torch.inference_mode():
-                    step = self.get_step(obs)
+                    # step = self.get_step(obs)
                     obs[:, -1] /= self.env.max_episode_length
                     hi = step % self.high_num_steps
                     high_update = (train_step == self.num_steps_per_env - 1)  # or dones[0]
@@ -232,7 +234,7 @@ class HierarchicalRunner(BaseRunner):
                         high_critic_obs = high_obs
                         high_actions = self.high_alg.act(high_obs, high_critic_obs)
                         # high_actions[:] *= self.high_actions_scale
-                        high_actions, h_cover, h_clip = self.clip_action(high_actions, (min_a, max_a))
+                        high_actions, h_cover, h_clip = self.clip_action(high_actions * 1.1, (min_a, max_a))
                         h_comb_std_coeff = self._compute_combined_std_coeff(h_cover, h_clip)
                         self.high_alg.actor_critic.update_std_coeff(h_comb_std_coeff)
 
@@ -244,7 +246,7 @@ class HierarchicalRunner(BaseRunner):
                         mid_critic_obs = mid_obs
                         mid_actions = self.mid_alg.act(mid_obs, mid_critic_obs)
                         # mid_actions[:] *= self.mid_actions_scale
-                        mid_actions, m_cover, m_clip = self.clip_action(mid_actions, (-3.14, 3.14))
+                        mid_actions, m_cover, m_clip = self.clip_action(mid_actions * 1.1, (-3.14, 3.14))
                         m_comb_std_coeff = self._compute_combined_std_coeff(m_cover, m_clip)
                         self.mid_alg.actor_critic.update_std_coeff(m_comb_std_coeff)
 
@@ -259,8 +261,8 @@ class HierarchicalRunner(BaseRunner):
                     low_obs = self.get_low_obs(obs, low_actions, mid_actions)
                     low_critic_obs = low_obs
                     low_actions = self.low_alg.act(low_obs, low_critic_obs)
-                    low_actions_scale = 1.2
-                    low_actions, l_cover, l_clip = self.clip_action(low_actions * low_actions_scale, (-400, 400))
+                    # low_actions_scale = 1.2 
+                    low_actions, l_cover, l_clip = self.clip_action(low_actions, (-400, 400), False)
                     l_comb_std_coeff = self._compute_combined_std_coeff(l_cover, l_clip)
                     self.low_alg.actor_critic.update_std_coeff(l_comb_std_coeff)
                     obs, privileged_obs, new_high_rewards, dones, infos = self.env.step(low_actions, high_actions,
@@ -352,6 +354,10 @@ class HierarchicalRunner(BaseRunner):
                     high_value_loss, high_surrogate_loss = self.high_alg.update()
                     self.mid_alg.actor_critic.update_upp_std_coeff(self.high_alg.actor_critic.down_std_coeff)
                     high_return = 0
+
+                step += 1
+                if step % self.env.max_episode_length == 0:
+                    step = 0
 
             stop = time.time()
             collection_time = stop - start
