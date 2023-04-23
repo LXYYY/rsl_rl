@@ -46,7 +46,7 @@ class HierarchicalRunner(BaseRunner):
 
         super().__init__(env, train_cfg, log_dir, device)
 
-        self.high_batch_n = 3
+        self.high_batch_n = 1
         self.mid_batch_n = 5
         self.low_batch_n = 1
 
@@ -226,7 +226,7 @@ class HierarchicalRunner(BaseRunner):
                     # step = self.get_step(obs)
                     obs[:, -1] /= self.env.max_episode_length
                     hi = step % self.high_num_steps
-                    high_update = (train_step == self.num_steps_per_env - 1)  # or dones[0]
+                    high_update = (train_step == self.num_steps_per_env - 1)
                     mid_update = (hi == self.high_num_steps - 1)  # or dones[0]
                     if hi == 0:
                         high_it[:] = hi
