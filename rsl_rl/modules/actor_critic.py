@@ -151,8 +151,13 @@ class ActorCritic(nn.Module):
 
     def update_distribution(self, observations):
         mean = self.actor(observations)
+        # Find invalid values (nan and inf)
+        invalid_values = torch.isnan(mean) | torch.isinf(mean)
+        # Replace invalid values with zero
+        mean = torch.where(invalid_values, torch.zeros_like(mean), mean)
         std = self.std * self.upp_std_coeff
-        self.wstd = torch.exp(std) * self.std_coeff
+        std = torch.clip(std, min=1e-5)
+        self.wstd = std * self.std_coeff
         self.distribution = Normal(mean, mean * 0. + self.wstd)
 
     def act(self, observations, **kwargs):

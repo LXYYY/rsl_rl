@@ -119,7 +119,7 @@ class HierarchicalRunner(BaseRunner):
         low_actor_critic: ActorCritic = actor_critic_class(low_num_obs,
                                                            low_num_critic_obs,
                                                            low_num_actions,
-                                                           # action_activation='tanh',
+                                                           action_activation='tanh',
                                                            min_std=1,
                                                            # std_mode='adaptive',
                                                            **low_policy_cfg).to(self.device)
@@ -259,7 +259,8 @@ class HierarchicalRunner(BaseRunner):
                     low_obs = self.get_low_obs(obs, low_actions, mid_actions)
                     low_critic_obs = low_obs
                     low_actions = self.low_alg.act(low_obs, low_critic_obs)
-                    low_actions, l_cover, l_clip = self.clip_action(low_actions, (-400, 400), False)
+                    low_actions_scale = 1.2
+                    low_actions, l_cover, l_clip = self.clip_action(low_actions * low_actions_scale, (-400, 400))
                     l_comb_std_coeff = self._compute_combined_std_coeff(l_cover, l_clip)
                     self.low_alg.actor_critic.update_std_coeff(l_comb_std_coeff)
                     obs, privileged_obs, new_high_rewards, dones, infos = self.env.step(low_actions, high_actions,
@@ -424,9 +425,9 @@ class HierarchicalRunner(BaseRunner):
         self.writer.add_scalar('Policy/high/std_coeff', locs['h_comb_std_coeff'], locs['it'])
         self.writer.add_scalar('Policy/mid/std_coeff', locs['m_comb_std_coeff'], locs['it'])
         self.writer.add_scalar('Policy/low/std_coeff', locs['l_comb_std_coeff'], locs['it'])
-        self.writer.add_scalar('Policy/high/wstd', self.high_alg.wstd, locs['it'])
-        self.writer.add_scalar('Policy/mid/wstd', self.mid_alg.wstd, locs['it'])
-        self.writer.add_scalar('Policy/low/wstd', self.low_alg.wstd, locs['it'])
+        self.writer.add_scalar('Policy/high/wstd', self.high_alg.actor_critic.wstd.mean().item(), locs['it'])
+        self.writer.add_scalar('Policy/mid/wstd', self.mid_alg.actor_critic.wstd.mean().item(), locs['it'])
+        self.writer.add_scalar('Policy/low/wstd', self.low_alg.actor_critic.wstd.mean().item(), locs['it'])
 
         self.writer.add_scalar('Perf/total_fps', fps, locs['it'])
         self.writer.add_scalar('Perf/collection time', locs['collection_time'], locs['it'])
@@ -608,7 +609,7 @@ class HierarchicalRunner(BaseRunner):
 
         return clipped_actions, coverage, clipped_ratio
 
-    def _calculate_coverage(self, actions, action_range, threshold=0.1):
+    def _calculate_coverage(self, actions, action_range, threshold=0.01):
         min_val, max_val = action_range
         bins = torch.linspace(min_val, max_val, 100)  # You can adjust the number of bins based on your preference
         hist = torch.histc(actions, bins=bins.shape[0], min=min_val, max=max_val)
@@ -616,4 +617,4 @@ class HierarchicalRunner(BaseRunner):
         return coverage
 
     def _compute_combined_std_coeff(self, coverage, clipped_ratio):
-        return (2 - coverage) * (1 - clipped_ratio)
+        return (1.5 - coverage) * (1 - clipped_ratio)
