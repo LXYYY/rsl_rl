@@ -46,8 +46,8 @@ class HierarchicalRunner(BaseRunner):
 
         super().__init__(env, train_cfg, log_dir, device)
 
-        self.high_batch_n = 6
-        self.mid_batch_n = 10
+        self.high_batch_n = 3
+        self.mid_batch_n = 5
         self.low_batch_n = 1
 
     def init_networks(self):
@@ -239,7 +239,7 @@ class HierarchicalRunner(BaseRunner):
                         # high_actions[:] *= self.high_actions_scale
                         high_actions, h_cover, h_clip = self.clip_action(high_actions * 1.1, (min_a, max_a))
                         h_comb_std_coeff = self._compute_combined_std_coeff(h_cover, h_clip, target_coverage=0.8)
-                        self.high_alg.actor_critic.update_std_coeff(h_comb_std_coeff)
+                        # self.high_alg.actor_critic.update_std_coeff(h_comb_std_coeff)
 
                     mi = step % self.mid_num_steps
                     cmi = (step % self.high_num_steps) // self.mid_num_steps
@@ -250,8 +250,8 @@ class HierarchicalRunner(BaseRunner):
                         mid_actions = self.mid_alg.act(mid_obs, mid_critic_obs)
                         # mid_actions[:] *= self.mid_actions_scale
                         mid_actions, m_cover, m_clip = self.clip_action(mid_actions * 1.1, (-3.14, 3.14))
-                        m_comb_std_coeff = self._compute_combined_std_coeff(m_cover, m_clip)
-                        self.mid_alg.actor_critic.update_std_coeff(m_comb_std_coeff)
+                        m_comb_std_coeff = self._compute_combined_std_coeff(m_cover, m_clip, target_coverage=0.6)
+                        # self.mid_alg.actor_critic.update_std_coeff(m_comb_std_coeff)
 
                     cli = (step % self.high_num_steps) % self.mid_num_steps
                     low_update = (cli == self.mid_num_steps - 1)  # or dones[0]
@@ -267,7 +267,7 @@ class HierarchicalRunner(BaseRunner):
                     # low_actions_scale = 1.2 
                     low_actions, l_cover, l_clip = self.clip_action(low_actions, (-400, 400), False)
                     l_comb_std_coeff = self._compute_combined_std_coeff(l_cover, l_clip)
-                    self.low_alg.actor_critic.update_std_coeff(l_comb_std_coeff)
+                    # self.low_alg.actor_critic.update_std_coeff(l_comb_std_coeff)
                     obs, privileged_obs, new_high_rewards, dones, infos = self.env.step(low_actions, high_actions,
                                                                                         mid_actions, low_timeout,
                                                                                         mid_timeout)
