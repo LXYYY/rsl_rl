@@ -46,8 +46,8 @@ class HierarchicalRunner(BaseRunner):
 
         super().__init__(env, train_cfg, log_dir, device)
 
-        self.high_batch_n = 1
-        self.mid_batch_n = 5
+        self.high_batch_n = 6
+        self.mid_batch_n = 10
         self.low_batch_n = 1
 
     def init_networks(self):
@@ -100,6 +100,7 @@ class HierarchicalRunner(BaseRunner):
                                                             action_activation='tanh',
                                                             min_std=1,
                                                             down_std_action_dim=self.mid_num_actions,
+                                                            dropout_prob=0.5,
                                                             **high_policy_cfg).to(self.device)
         high_actor_critic.upp_std_coeff = high_actor_critic.upp_std_coeff.to(self.device)
         high_actor_critic.std_coeff = high_actor_critic.std_coeff.to(self.device)
@@ -111,6 +112,7 @@ class HierarchicalRunner(BaseRunner):
                                                            action_activation='tanh',
                                                            min_std=1,
                                                            down_std_action_dim=self.low_num_actions,
+                                                           dropout_prob=0.3,
                                                            **mid_policy_cfg).to(self.device)
         self.mid_alg: PPO = alg_class(mid_actor_critic, device=self.device, **self.alg_cfg['mid'])
         mid_actor_critic.upp_std_coeff = mid_actor_critic.upp_std_coeff.to(self.device)
@@ -121,6 +123,7 @@ class HierarchicalRunner(BaseRunner):
                                                            low_num_actions,
                                                            # action_activation='tanh',
                                                            min_std=1,
+                                                           dropout_prob=0.1,
                                                            # std_mode='adaptive',
                                                            **low_policy_cfg).to(self.device)
         self.low_alg: PPO = alg_class(low_actor_critic, device=self.device, **self.alg_cfg['low'])
@@ -235,7 +238,7 @@ class HierarchicalRunner(BaseRunner):
                         high_actions = self.high_alg.act(high_obs, high_critic_obs)
                         # high_actions[:] *= self.high_actions_scale
                         high_actions, h_cover, h_clip = self.clip_action(high_actions * 1.1, (min_a, max_a))
-                        h_comb_std_coeff = self._compute_combined_std_coeff(h_cover, h_clip)
+                        h_comb_std_coeff = self._compute_combined_std_coeff(h_cover, h_clip, target_coverage=0.8)
                         self.high_alg.actor_critic.update_std_coeff(h_comb_std_coeff)
 
                     mi = step % self.mid_num_steps
@@ -462,6 +465,7 @@ class HierarchicalRunner(BaseRunner):
             self.writer.add_scalar('Train/mean_reward/time', statistics.mean(locs['rewbuffer']), self.tot_time)
             self.writer.add_scalar('Train/mean_episode_length/time', statistics.mean(locs['lenbuffer']), self.tot_time)
             self.writer.add_scalar('Train/curriculum/levels', self.env.curri_level_buf.mean().item(), locs['it'])
+            self.writer.add_scalar('Train/success_rate', self.env.success_buf.sum().item(), locs['it'])
 
         str = f" \033[1m Learning iteration {locs['it']}/{self.current_learning_iteration + locs['num_learning_iterations']} \033[0m "
 
@@ -480,7 +484,8 @@ class HierarchicalRunner(BaseRunner):
                           f"""{'Mean action noise std Mid:':>{pad}} {mid_mean_std.item():.2f}\n"""
                           f"""{'Mean action noise std Low:':>{pad}} {low_mean_std.item():.2f}\n"""
                           f"""{'Mean reward:':>{pad}} {statistics.mean(locs['rewbuffer']):.2f}\n"""
-                          f"""{'Mean episode length:':>{pad}} {statistics.mean(locs['lenbuffer']):.2f}\n""")
+                          f"""{'Mean episode length:':>{pad}} {statistics.mean(locs['lenbuffer']):.2f}\n"""
+                          f"""{'Mean curriculum level:':>{pad}} {self.env.curri_level_buf.mean().item():.4f}\n""")
             #   f"""{'Mean reward/step:':>{pad}} {locs['mean_reward']:.2f}\n"""
             #   f"""{'Mean episode length/episode:':>{pad}} {locs['mean_trajectory_length']:.2f}\n""")
         else:
@@ -500,6 +505,7 @@ class HierarchicalRunner(BaseRunner):
             #   f"""{'Mean reward/step:':>{pad}} {locs['mean_reward']:.2f}\n"""
             #   f"""{'Mean episode length/episode:':>{pad}} {locs['mean_trajectory_length']:.2f}\n""")
 
+        
         log_string += ep_string
         log_string += (f"""{'-' * width}\n"""
                        f"""{'Total timesteps:':>{pad}} {self.tot_timesteps}\n"""
@@ -612,7 +618,8 @@ class HierarchicalRunner(BaseRunner):
         if resample:
             random_actions = torch.rand_like(actions) * interval * 2 + action_range[0]
             clipped_actions[clipped_index] = random_actions[clipped_index]
-            clipped_ratio = torch.sum(clipped_index).float() / actions.numel()
+        
+        clipped_ratio = torch.sum(clipped_index).float() / actions.numel()
 
         return clipped_actions, coverage, clipped_ratio
 
@@ -623,5 +630,5 @@ class HierarchicalRunner(BaseRunner):
         coverage = torch.sum(hist > threshold).float() / hist.shape[0]
         return coverage
 
-    def _compute_combined_std_coeff(self, coverage, clipped_ratio):
-        return (1.5 - coverage) * (1 - clipped_ratio)
+    def _compute_combined_std_coeff(self, coverage, clipped_ratio, target_coverage=0.5):
+        return (1 - (-target_coverage+coverage)) * (1 - clipped_ratio)

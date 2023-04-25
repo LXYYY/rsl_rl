@@ -50,6 +50,7 @@ class ActorCritic(nn.Module):
                  min_std=1e-6,
                  min_upp_std_coeff=0.1,
                  down_std_action_dim=None,
+                 dropout_prob=None,
                  **kwargs):
         if kwargs:
             print("ActorCritic.__init__ got unexpected arguments, which will be ignored: " + str(
@@ -65,6 +66,8 @@ class ActorCritic(nn.Module):
         actor_layers = []
         actor_layers.append(nn.Linear(mlp_input_dim_a, actor_hidden_dims[0]))
         actor_layers.append(activation)
+        if dropout_prob is not None:
+            actor_layers.append(nn.Dropout(dropout_prob))  # Add dropout after the first activation
         for l in range(len(actor_hidden_dims)):
             if l == len(actor_hidden_dims) - 1:
                 actor_layers.append(nn.Linear(actor_hidden_dims[l], num_actions))
