@@ -111,6 +111,8 @@ class ActorCritic(nn.Module):
 
         self.std_coeff = torch.ones(num_actions)
 
+        self.std_decay_with_time=True
+
         # seems that we get better performance without init
         # self.init_memory_weights(self.memory_a, 0.001, 0.)
         # self.init_memory_weights(self.memory_c, 0.001, 0.)
@@ -160,6 +162,9 @@ class ActorCritic(nn.Module):
         mean = torch.where(invalid_values, torch.zeros_like(mean), mean)
         std = self.std * self.upp_std_coeff
         std = torch.clip(std, min=1e-5)
+        if self.std_decay_with_time:
+            self.std_decay=torch.pow(0.96, observations[:, -1] * 100).unsqueeze(1)
+            std = std.unsqueeze(0) * self.std_decay
         self.wstd = std * self.std_coeff
         self.distribution = Normal(mean, mean * 0. + self.wstd)
 
