@@ -230,12 +230,11 @@ class HierarchicalRunner(BaseRunner):
 
         step = 0
 
-        std_decay = 0.99
-        std_decay_coeff = 0.5
+        meta_loss = 0
 
-        rew_r = torch.ones(self.env.num_envs, 3, dtype=torch.float32, device=self.device)
-        rew_r[:, 1] = 0
-        rew_r[:, 2] = 0
+        rew_r = torch.ones(3, dtype=torch.float32, device=self.device)
+        rew_r[1] = 0
+        rew_r[2] = 0
 
         for it in range(self.current_learning_iteration, tot_iter):
             start = time.time()
@@ -290,9 +289,11 @@ class HierarchicalRunner(BaseRunner):
 
                     new_mid_rewards, low_rewards = self.env.get_reward_mid_low()
 
-                    new_high_rewards = high_rewards * rew_r[:, 0]
-                    new_mid_rewards += high_rewards * rew_r[:, 1]
-                    low_rewards += high_rewards * rew_r[:, 2]
+                    high_penalty = torch.clip(high_rewards, max=0)
+                    high_rewards = torch.clip(high_rewards, min=0)
+                    new_high_rewards = high_rewards + high_penalty * rew_r[0]
+                    new_mid_rewards += high_penalty * rew_r[1]
+                    low_rewards += high_penalty * rew_r[2]
 
                     high_dones, mid_dones, low_dones = self.env.get_done_levels()
 
@@ -378,16 +379,19 @@ class HierarchicalRunner(BaseRunner):
                     highn += 1
                     high_value_loss, high_surrogate_loss = self.high_alg.update()
                     self.mid_alg.actor_critic.update_upp_std_coeff(self.high_alg.actor_critic.down_std_coeff)
+
+                    if self.meta_learner is not None:
+                        all_actions = torch.tensor([statistics.mean(rewbuffer), statistics.mean(mid_rewbuffer),
+                                                    statistics.mean(low_rewbuffer), statistics.mean(lenbuffer),
+                                                    statistics.mean(mid_lenbuffer), statistics.mean(low_lenbuffer)],
+                                                   dtype=torch.float32, device=self.device)
+
+                        rew_r, meta_loss = self.meta_learner.update(all_actions, high_rewards.unsqueeze(1))
                     high_return = 0
 
                 step += 1
                 if step % self.env.max_episode_length == 0:
                     step = 0
-
-                all_actions = torch.cat([high_actions_ori, mid_actions_ori, low_actions_ori], dim=1)
-                fail_signal = new_high_rewards < 0
-                if self.meta_learner is not None:
-                    rew_r = self.meta_learner.update(obs, all_actions, fail_signal, new_high_rewards)
 
             stop = time.time()
             collection_time = stop - start
@@ -448,6 +452,7 @@ class HierarchicalRunner(BaseRunner):
         self.writer.add_scalar('Loss/high/learning_rate', self.high_alg.learning_rate, locs['it'])
         self.writer.add_scalar('Loss/mid/learning_rate', self.mid_alg.learning_rate, locs['it'])
         self.writer.add_scalar('Loss/low/learning_rate', self.low_alg.learning_rate, locs['it'])
+        self.writer.add_scalar('Loss/meta/loss', locs['meta_loss'], locs['it'])
         self.writer.add_scalar('Policy/high/mean_noise_std', high_mean_std.item(), locs['it'])
         self.writer.add_scalar('Policy/mid/mean_noise_std', mid_mean_std.item(), locs['it'])
         self.writer.add_scalar('Policy/low/mean_noise_std', low_mean_std.item(), locs['it'])

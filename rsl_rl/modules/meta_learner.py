@@ -28,21 +28,22 @@ class MetaLearner():
         self.optimizer = optim.Adam(self.cnn.parameters(), lr=0.001)
         self.loss_fn = nn.MSELoss()
 
-    def update(self, states, actions, failure_signals, reward):
+    def update(self, states, reward):
         # Combine states, actions, and failure signals into a single tensor
-        inputs = torch.cat((states, actions, failure_signals), dim=1)
 
         self.optimizer.zero_grad()
 
-        rew_r = self.cnn(inputs)
+        rew_r = self.cnn(states)
         reward_clone = reward.clone().detach().requires_grad_(True)
         rew = torch.sum(rew_r * reward_clone)
 
-        loss = -rew
+        mse_loss = nn.MSELoss()
+        loss = mse_loss(rew/50, torch.tensor(50.0).expand_as(rew).to(self.device))
+
         loss.backward()
         self.optimizer.step()
 
-        return rew_r
+        return rew_r, loss
 
     def act(self, x):
         return self.cnn(x)
