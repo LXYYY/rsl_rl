@@ -38,7 +38,7 @@ class MetaLearner():
         rew = torch.sum(rew_r * reward_clone)
 
         mse_loss = nn.MSELoss()
-        loss = mse_loss(rew/50, torch.tensor(50.0).expand_as(rew).to(self.device))
+        loss = mse_loss(rew/50, torch.tensor(1.).expand_as(rew).to(self.device))
 
         loss.backward()
         self.optimizer.step()
