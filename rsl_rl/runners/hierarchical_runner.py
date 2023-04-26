@@ -220,8 +220,8 @@ class HierarchicalRunner(BaseRunner):
         mid_return = 0
         high_return = 0
 
-        min_a = torch.tensor([0.6, -0.5, -2, -2], device=self.device)
-        max_a = torch.tensor([1.5, 0.5, 2, 2], device=self.device)
+        min_a = torch.tensor([0.6, -0.5, -1, -1], device=self.device)
+        max_a = torch.tensor([1.5, 0.5, 1, 1], device=self.device)
 
         step = 0
 
