@@ -34,6 +34,7 @@ import torch
 import torch.nn as nn
 from torch.distributions import Normal
 from torch.nn.modules import rnn
+import torch.nn.functional as F
 
 
 class ActorCritic(nn.Module):
@@ -47,7 +48,6 @@ class ActorCritic(nn.Module):
                  activation='elu',
                  init_noise_std=1.0,
                  action_activation=None,
-                 min_std=1e-6,
                  min_upp_std_coeff=0.1,
                  down_std_action_dim=None,
                  dropout_prob=None,
@@ -96,7 +96,7 @@ class ActorCritic(nn.Module):
 
         # Action noise
         self.std = nn.Parameter(init_noise_std * torch.ones(num_actions))
-        self.min_std = min_std
+        self.pstd = init_noise_std * torch.ones(num_actions)
         self.distribution = None
         # disable args validation for speedup
         Normal.set_default_validate_args = False
@@ -111,7 +111,9 @@ class ActorCritic(nn.Module):
 
         self.std_coeff = torch.ones(num_actions)
 
-        self.std_decay_with_time=True
+        self.std_decay_with_time = True
+
+        self.std_max = 1
 
         # seems that we get better performance without init
         # self.init_memory_weights(self.memory_a, 0.001, 0.)
@@ -154,16 +156,19 @@ class ActorCritic(nn.Module):
     def update_std_coeff(self, std_coeff):
         self.std_coeff[:] = std_coeff
 
+    def update_std_max(self, std_max):
+        self.std_max = std_max.item()
+
     def update_distribution(self, observations):
         mean = self.actor(observations)
         # Find invalid values (nan and inf)
         invalid_values = torch.isnan(mean) | torch.isinf(mean)
         # Replace invalid values with zero
         mean = torch.where(invalid_values, torch.zeros_like(mean), mean)
-        std = self.std * self.upp_std_coeff
-        std = torch.clip(std, min=1e-5)
+        self.pstd = F.sigmoid(self.std) * self.std_max
+        std = torch.clip(self.pstd, min=1e-5, max=0.9)
         if self.std_decay_with_time:
-            self.std_decay=torch.pow(0.99, observations[:, -1] * 100).unsqueeze(1)
+            self.std_decay = torch.pow(0.99, observations[:, -1] * 100).unsqueeze(1)
             std = std.unsqueeze(0) * self.std_decay
         self.wstd = std * self.std_coeff
         self.distribution = Normal(mean, mean * 0. + self.wstd)
