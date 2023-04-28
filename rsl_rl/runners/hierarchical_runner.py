@@ -109,6 +109,7 @@ class HierarchicalRunner(BaseRunner):
                                                             **high_policy_cfg).to(self.device)
         high_actor_critic.upp_std_coeff = high_actor_critic.upp_std_coeff.to(self.device)
         high_actor_critic.std_coeff = high_actor_critic.std_coeff.to(self.device)
+        high_actor_critic.std= high_actor_critic.std.to(self.device)
         self.high_alg: PPO = alg_class(high_actor_critic, device=self.device, **self.alg_cfg['high'])
 
         mid_actor_critic: ActorCritic = actor_critic_class(mid_num_obs,
@@ -122,7 +123,7 @@ class HierarchicalRunner(BaseRunner):
         self.mid_alg: PPO = alg_class(mid_actor_critic, device=self.device, **self.alg_cfg['mid'])
         mid_actor_critic.upp_std_coeff = mid_actor_critic.upp_std_coeff.to(self.device)
         mid_actor_critic.std_coeff = mid_actor_critic.std_coeff.to(self.device)
-
+        mid_actor_critic.std = mid_actor_critic.std.to(self.device)
         low_actor_critic: ActorCritic = actor_critic_class(low_num_obs,
                                                            low_num_critic_obs,
                                                            low_num_actions,
@@ -134,7 +135,7 @@ class HierarchicalRunner(BaseRunner):
         self.low_alg: PPO = alg_class(low_actor_critic, device=self.device, **self.alg_cfg['low'])
         low_actor_critic.upp_std_coeff = low_actor_critic.upp_std_coeff.to(self.device)
         low_actor_critic.std_coeff = low_actor_critic.std_coeff.to(self.device)
-
+        low_actor_critic.std = low_actor_critic.std.to(self.device)
         self.high_alg.init_storage(self.env.num_envs, high_num_steps_per_env, [high_num_obs], [high_num_critic_obs],
                                    [high_num_actions])
         self.mid_alg.init_storage(self.env.num_envs, mid_num_steps_per_env, [mid_num_critic_obs],
@@ -232,10 +233,12 @@ class HierarchicalRunner(BaseRunner):
 
         meta_loss = 0
 
-        rew_r = torch.ones(4, dtype=torch.float32, device=self.device)
+        rew_r = torch.ones(3, dtype=torch.float32, device=self.device)
         rew_r[1] = 0
         rew_r[2] = 0
-        rew_r[3] = 0
+
+        stds_r=torch.ones(3, dtype=torch.float32, device=self.device)/3
+
 
         for it in range(self.current_learning_iteration, tot_iter):
             start = time.time()
@@ -251,6 +254,7 @@ class HierarchicalRunner(BaseRunner):
                         high_it[:] = hi
                         high_obs = self.get_high_obs(obs, high_actions, mid_dones)
                         high_critic_obs = high_obs
+                        self.high_alg.actor_critic.std[:] = stds_r[0]
                         high_actions_ori = self.high_alg.act(high_obs, high_critic_obs)
                         # high_actions[:] *= self.high_actions_scale
                         high_actions, h_cover, h_clip = self.clip_action(high_actions_ori * 1.1, (min_a, max_a))
@@ -264,6 +268,7 @@ class HierarchicalRunner(BaseRunner):
                         # mid_obs = mid_obs.view(self.env.num_envs, -1)[low_dones]
                         mid_obs = self.get_mid_obs(obs, mid_actions_ori, high_actions, low_dones)
                         mid_critic_obs = mid_obs
+                        self.mid_alg.actor_critic.std[:] = stds_r[1]
                         mid_actions_ori = self.mid_alg.act(mid_obs, mid_critic_obs)
                         # mid_actions[:] *= self.mid_actions_scale
                         mid_actions, m_cover, m_clip = self.clip_action(mid_actions_ori * 1.1, (-3.14/2, 3.14/2))
@@ -281,8 +286,8 @@ class HierarchicalRunner(BaseRunner):
                     # mid_low_timeout = mid_timeout & low_timeout
                     low_obs = self.get_low_obs(obs, low_actions_ori, mid_actions_ori, cli)
                     low_critic_obs = low_obs
+                    self.low_alg.actor_critic.std[:] = stds_r[2]
                     low_actions_ori = self.low_alg.act(low_obs, low_critic_obs)
-                    # low_actions_scale = 1.2 
                     low_actions, l_cover, l_clip = self.clip_action(low_actions_ori, (-400, 400))
                     l_comb_std_coeff = self._compute_combined_std_coeff(l_cover, l_clip)
                     self.low_alg.actor_critic.update_std_coeff(l_comb_std_coeff)
@@ -394,7 +399,7 @@ class HierarchicalRunner(BaseRunner):
                                                     self.high_alg.actor_critic.std.mean().item()],
                                                    dtype=torch.float32, device=self.device)
 
-                        rew_r, meta_loss = self.meta_learner.update(all_actions, (high_rewards+high_penalty).unsqueeze(1))
+                        stds_r, meta_loss = self.meta_learner.update(all_actions, (high_rewards+high_penalty).unsqueeze(1), stds_r)
                     high_return = 0
 
                 step += 1
@@ -499,9 +504,9 @@ class HierarchicalRunner(BaseRunner):
         self.writer.add_scalar('Meta/rew_r_high', locs['rew_r'][..., 0], locs['it'])
         self.writer.add_scalar('Meta/rew_r_mid', locs['rew_r'][..., 1], locs['it'])
         self.writer.add_scalar('Meta/rew_r_low', locs['rew_r'][..., 2], locs['it'])
-        # self.writer.add_scalar('Meta/stds_r_high', locs['stds_r'][..., 0], locs['it'])
-        # self.writer.add_scalar('Meta/stds_r_mid', locs['stds_r'][..., 1], locs['it'])
-        # self.writer.add_scalar('Meta/stds_r_low', locs['stds_r'][..., 2], locs['it'])
+        self.writer.add_scalar('Meta/stds_r_high', locs['stds_r'][..., 0], locs['it'])
+        self.writer.add_scalar('Meta/stds_r_mid', locs['stds_r'][..., 1], locs['it'])
+        self.writer.add_scalar('Meta/stds_r_low', locs['stds_r'][..., 2], locs['it'])
         
         if len(locs['rewbuffer']) > 0 and len(locs['lenbuffer']) > 0:
             self.writer.add_scalar('Train/mean_reward', statistics.mean(locs['rewbuffer']), locs['it'])

@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 
+
 class LSTM(nn.Module):
     def __init__(self, input_size, output_size, hidden_size, num_layers=2):
         super(LSTM, self).__init__()
@@ -22,8 +23,9 @@ class LSTM(nn.Module):
 
         # Decode the hidden state of the last time step
         out = self.fc(out[:, -1, :])
-        out=F.softmax(out, dim=1)
+        out = F.softmax(out, dim=1)
         return out.squeeze(0)
+
 
 class CNN(nn.Module):
     def __init__(self, state_dim, output_size, hidden_dim):
@@ -53,22 +55,29 @@ class MetaLearner():
         self.optimizer = optim.Adam(self.network.parameters(), lr=0.001)
         self.loss_fn = nn.MSELoss()
 
-    def update(self, states, reward):
-        # Combine states, actions, and failure signals into a single tensor
-
+    def update(self, states, reward, stds):
         self.optimizer.zero_grad()
 
-        rew_r = self.network(states)
         reward_clone = reward.clone().detach().requires_grad_(True)
-        rew = torch.sum(rew_r * reward_clone)
+        predicted_stds = self.network(states)
+
+        reward_clone = reward.clone().detach().requires_grad_(True)
+        stds_clone = stds.clone().detach().requires_grad_(True)
+        # Compute the loss for the reward proportions
+        overall_reward = torch.sum(reward_clone)
+        reward_loss = -overall_reward
+
+        # Compute the loss for the stds
+        std_loss = ((stds_clone - predicted_stds) ** 2).mean()
 
         mse_loss = nn.MSELoss()
-        loss = mse_loss(rew/50, torch.tensor(1.).expand_as(rew).to(self.device))
+        # Combine the losses with a weighting factor
+        loss = reward_loss + 0.01 * std_loss
 
         loss.backward()
         self.optimizer.step()
 
-        return rew_r, loss
+        return predicted_stds, loss
 
     def act(self, x):
         return self.network(x)

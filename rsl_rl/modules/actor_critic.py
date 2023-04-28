@@ -95,7 +95,7 @@ class ActorCritic(nn.Module):
         print(f"Critic MLP: {self.critic}")
 
         # Action noise
-        self.std = nn.Parameter(init_noise_std * torch.ones(num_actions))
+        self.std = init_noise_std * torch.ones(num_actions)
         self.min_std = min_std
         self.distribution = None
         # disable args validation for speedup
