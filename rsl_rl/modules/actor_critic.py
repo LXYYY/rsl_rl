@@ -163,7 +163,7 @@ class ActorCritic(nn.Module):
         std = self.std * self.upp_std_coeff
         std = torch.clip(std, min=1e-5)
         if self.std_decay_with_time:
-            self.std_decay=torch.pow(0.96, observations[:, -1] * 100).unsqueeze(1)
+            self.std_decay=torch.pow(0.99, observations[:, -1] * 100).unsqueeze(1)
             std = std.unsqueeze(0) * self.std_decay
         self.wstd = std * self.std_coeff
         self.distribution = Normal(mean, mean * 0. + self.wstd)
