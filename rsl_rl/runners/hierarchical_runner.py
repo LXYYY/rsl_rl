@@ -257,7 +257,7 @@ class HierarchicalRunner(BaseRunner):
                         high_actions, h_cover, h_clip = self.clip_action(high_actions_ori * 1.1, (min_a, max_a))
                         self.env.update_high_actions(high_actions)
                         h_comb_std_coeff = self._compute_combined_std_coeff(h_cover, h_clip, target_coverage=0.8)
-                        self.high_alg.actor_critic.update_std_coeff(h_comb_std_coeff)
+                        # self.high_alg.actor_critic.update_std_coeff(h_comb_std_coeff)
 
                     mi = step % self.mid_num_steps
                     cmi = (step % self.high_num_steps) // self.mid_num_steps
@@ -271,7 +271,7 @@ class HierarchicalRunner(BaseRunner):
                         mid_actions, m_cover, m_clip = self.clip_action(mid_actions_ori * 1.1, (-3.14 / 2, 3.14 / 2))
                         self.env.update_mid_actions(mid_actions)
                         m_comb_std_coeff = self._compute_combined_std_coeff(m_cover, m_clip, target_coverage=0.6)
-                        self.mid_alg.actor_critic.update_std_coeff(m_comb_std_coeff)
+                        # self.mid_alg.actor_critic.update_std_coeff(m_comb_std_coeff)
 
                     cli = (step % self.high_num_steps) % self.mid_num_steps
                     low_update = (cli == self.mid_num_steps - 1)  # or dones[0]
@@ -287,7 +287,7 @@ class HierarchicalRunner(BaseRunner):
                     # low_actions_scale = 1.2 
                     low_actions, l_cover, l_clip = self.clip_action(low_actions_ori, (-400, 400))
                     l_comb_std_coeff = self._compute_combined_std_coeff(l_cover, l_clip)
-                    self.low_alg.actor_critic.update_std_coeff(l_comb_std_coeff)
+                    # self.low_alg.actor_critic.update_std_coeff(l_comb_std_coeff)
                     obs, privileged_obs, high_rewards, dones, infos = self.env.step(low_actions, low_timeout,
                                                                                     mid_timeout,
                                                                                     allow_reset=high_update)

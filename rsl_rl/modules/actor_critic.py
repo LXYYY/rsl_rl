@@ -165,7 +165,7 @@ class ActorCritic(nn.Module):
         invalid_values = torch.isnan(mean) | torch.isinf(mean)
         # Replace invalid values with zero
         mean = torch.where(invalid_values, torch.zeros_like(mean), mean)
-        self.pstd = F.sigmoid(self.std) * self.std_max
+        self.pstd = torch.sigmoid(self.std) * self.std_max
         std = torch.clip(self.pstd, min=1e-5, max=0.9)
         if self.std_decay_with_time:
             self.std_decay = torch.pow(0.99, observations[:, -1] * 100).unsqueeze(1)
