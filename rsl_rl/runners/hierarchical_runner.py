@@ -225,8 +225,8 @@ class HierarchicalRunner(BaseRunner):
         mid_return = 0
         high_return = 0
 
-        min_a = torch.tensor([0.6, -0.5, -0.5, -0.5], device=self.device)
-        max_a = torch.tensor([1.5, 0.5, 0.5, 0.5], device=self.device)
+        min_a = torch.tensor([-0.1, -0.1], device=self.device)
+        max_a = torch.tensor([0.1, 0.1], device=self.device)
 
         step = 0
 
@@ -497,8 +497,8 @@ class HierarchicalRunner(BaseRunner):
 
         self.writer.add_histogram('Actions/high_act_pos_0_dist', locs['high_actions'][..., 0], locs['it'])
         self.writer.add_histogram('Actions/high_act_pos_1_dist', locs['high_actions'][..., 1], locs['it'])
-        self.writer.add_histogram('Actions/high_act_vel_0_dist', locs['high_actions'][..., 2], locs['it'])
-        self.writer.add_histogram('Actions/high_act_vel_1_dist', locs['high_actions'][..., 3], locs['it'])
+        # self.writer.add_histogram('Actions/high_act_vel_0_dist', locs['high_actions'][..., 2], locs['it'])
+        # self.writer.add_histogram('Actions/high_act_vel_1_dist', locs['high_actions'][..., 3], locs['it'])
 
         self.writer.add_scalar('Meta/rew_r_high', locs['rew_r'][..., 0], locs['it'])
         self.writer.add_scalar('Meta/rew_r_mid', locs['rew_r'][..., 1], locs['it'])
