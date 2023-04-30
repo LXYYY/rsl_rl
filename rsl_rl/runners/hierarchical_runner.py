@@ -105,7 +105,7 @@ class HierarchicalRunner(BaseRunner):
                                                             action_activation='tanh',
                                                             min_std=1,
                                                             down_std_action_dim=self.mid_num_actions,
-                                                            dropout_prob=0.1,
+                                                            dropout_prob=0.5,
                                                             **high_policy_cfg).to(self.device)
         high_actor_critic.upp_std_coeff = high_actor_critic.upp_std_coeff.to(self.device)
         high_actor_critic.std_coeff = high_actor_critic.std_coeff.to(self.device)
@@ -128,7 +128,7 @@ class HierarchicalRunner(BaseRunner):
                                                            low_num_actions,
                                                            action_activation='tanh',
                                                            min_std=1,
-                                                           dropout_prob=0.1,
+                                                           # dropout_prob=0.1,
                                                            # std_mode='adaptive',
                                                            **low_policy_cfg).to(self.device)
         self.low_alg: PPO = alg_class(low_actor_critic, device=self.device, **self.alg_cfg['low'])
