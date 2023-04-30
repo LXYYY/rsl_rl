@@ -117,7 +117,7 @@ class HierarchicalRunner(BaseRunner):
                                                            action_activation='tanh',
                                                            min_std=1,
                                                            down_std_action_dim=self.low_num_actions,
-                                                           dropout_prob=0.5,
+                                                           dropout_prob=0.3,
                                                            **mid_policy_cfg).to(self.device)
         self.mid_alg: PPO = alg_class(mid_actor_critic, device=self.device, **self.alg_cfg['mid'])
         mid_actor_critic.upp_std_coeff = mid_actor_critic.upp_std_coeff.to(self.device)
@@ -128,7 +128,7 @@ class HierarchicalRunner(BaseRunner):
                                                            low_num_actions,
                                                            action_activation='tanh',
                                                            min_std=1,
-                                                           dropout_prob=0.5,
+                                                           dropout_prob=0.1,
                                                            # std_mode='adaptive',
                                                            **low_policy_cfg).to(self.device)
         self.low_alg: PPO = alg_class(low_actor_critic, device=self.device, **self.alg_cfg['low'])
@@ -225,8 +225,8 @@ class HierarchicalRunner(BaseRunner):
         mid_return = 0
         high_return = 0
 
-        min_a = torch.tensor([-0.1, -0.1], device=self.device)
-        max_a = torch.tensor([0.1, 0.1], device=self.device)
+        min_a = torch.tensor([-0.05, -0.05], device=self.device)
+        max_a = torch.tensor([0.05, 0.05], device=self.device)
 
         step = 0
 
@@ -243,7 +243,7 @@ class HierarchicalRunner(BaseRunner):
             for train_step in range(self.num_steps_per_env):
                 with torch.inference_mode():
                     # step = self.get_step(obs)
-                    obs[:, -1] /= self.env.max_episode_length
+                    obs[:, -1] /= self.env.max_episode_length*0.1
                     hi = step % self.high_num_steps
                     mid_update = (hi == self.high_num_steps - 1)  # or dones[0]
                     high_update = mid_update
@@ -251,9 +251,9 @@ class HierarchicalRunner(BaseRunner):
                         high_it[:] = hi
                         high_obs = self.get_high_obs(obs, high_actions, mid_dones)
                         high_critic_obs = high_obs
-                        self.high_alg.actor_critic.update_std_max(1 - self.mid_alg.actor_critic.pstd.mean())
+                        # self.high_alg.actor_critic.update_std_max(1 - self.mid_alg.actor_critic.pstd.mean())
                         high_actions_ori = self.high_alg.act(high_obs, high_critic_obs)
-                        # high_actions[:] *= self.high_actions_scale
+                        # high_actions[:] *= 0.0003
                         high_actions, h_cover, h_clip = self.clip_action(high_actions_ori * 1.1, (min_a, max_a))
                         self.env.update_high_actions(high_actions)
                         h_comb_std_coeff = self._compute_combined_std_coeff(h_cover, h_clip, target_coverage=0.8)
@@ -265,10 +265,10 @@ class HierarchicalRunner(BaseRunner):
                         # mid_obs = mid_obs.view(self.env.num_envs, -1)[low_dones]
                         mid_obs = self.get_mid_obs(obs, mid_actions_ori, high_actions, low_dones)
                         mid_critic_obs = mid_obs
-                        self.mid_alg.actor_critic.update_std_max(1 - self.low_alg.actor_critic.pstd.mean())
+                        # self.mid_alg.actor_critic.update_std_max(1 - self.low_alg.actor_critic.pstd.mean())
                         mid_actions_ori = self.mid_alg.act(mid_obs, mid_critic_obs)
-                        # mid_actions[:] *= self.mid_actions_scale
-                        mid_actions, m_cover, m_clip = self.clip_action(mid_actions_ori * 1.1, (-3.14 / 2, 3.14 / 2))
+                        # mid_actions[:] *= 0.005
+                        mid_actions, m_cover, m_clip = self.clip_action(mid_actions_ori * 1.1, (-1, 1))
                         self.env.update_mid_actions(mid_actions)
                         m_comb_std_coeff = self._compute_combined_std_coeff(m_cover, m_clip, target_coverage=0.6)
                         # self.mid_alg.actor_critic.update_std_coeff(m_comb_std_coeff)
@@ -285,12 +285,11 @@ class HierarchicalRunner(BaseRunner):
                     low_critic_obs = low_obs
                     low_actions_ori = self.low_alg.act(low_obs, low_critic_obs)
                     # low_actions_scale = 1.2 
-                    low_actions, l_cover, l_clip = self.clip_action(low_actions_ori, (-400, 400))
+                    low_actions, l_cover, l_clip = self.clip_action(low_actions_ori*1.1, (-100, 100))
                     l_comb_std_coeff = self._compute_combined_std_coeff(l_cover, l_clip)
                     # self.low_alg.actor_critic.update_std_coeff(l_comb_std_coeff)
                     obs, privileged_obs, high_rewards, dones, infos = self.env.step(low_actions, low_timeout,
-                                                                                    mid_timeout,
-                                                                                    allow_reset=high_update)
+                                                                                    mid_timeout)
 
                     new_mid_rewards, low_rewards = self.env.get_reward_mid_low()
 
@@ -301,6 +300,9 @@ class HierarchicalRunner(BaseRunner):
                     low_rewards += high_penalty * rew_r[2]
 
                     high_dones, mid_dones, low_dones = self.env.get_done_levels()
+
+                    if high_update:
+                        self.env.reset_terminated()
 
                     critic_obs = privileged_obs if privileged_obs is not None else obs
                     obs, critic_obs, new_high_rewards, dones = obs.to(self.device), critic_obs.to(
@@ -326,7 +328,7 @@ class HierarchicalRunner(BaseRunner):
                         cur_mid_episode_length += 1
                         cur_low_episode_length += 1
                         # TODO: this is not accurate
-                        new_ids = ((high_update | dones) > 0).nonzero(as_tuple=False)
+                        new_ids = ((dones) > 0).nonzero(as_tuple=False)
                         low_new_ids = ((low_update | dones) > 0).nonzero(as_tuple=False)
                         mid_new_ids = ((mid_update | dones) > 0).nonzero(as_tuple=False)
                         rewbuffer.extend(cur_reward_sum[new_ids][:, 0].cpu().numpy().tolist())
@@ -481,7 +483,7 @@ class HierarchicalRunner(BaseRunner):
         self.writer.add_scalar('Policy/high/wstd', self.high_alg.actor_critic.wstd.mean().item(), locs['it'])
         self.writer.add_scalar('Policy/mid/wstd', self.mid_alg.actor_critic.wstd.mean().item(), locs['it'])
         self.writer.add_scalar('Policy/low/wstd', self.low_alg.actor_critic.wstd.mean().item(), locs['it'])
-        self.writer.add_scalar('Policy/std_decay', self.low_alg.actor_critic.std_decay.mean().item(), locs['it'])
+        # self.writer.add_scalar('Policy/std_decay', self.low_alg.actor_critic.std_decay.mean().item(), locs['it'])
 
         self.writer.add_scalar('Perf/total_fps', fps, locs['it'])
         self.writer.add_scalar('Perf/collection time', locs['collection_time'], locs['it'])
@@ -598,7 +600,7 @@ class HierarchicalRunner(BaseRunner):
         return torch.cat([mid_actions, high_actions, low_dones.unsqueeze(1), obs[..., self.mid_obs_idx]], dim=1)
 
     def get_low_obs(self, obs, low_actions, mid_actions, cli):
-        t = torch.tensor([cli / 20], dtype=torch.float32, device=obs.device).repeat(obs.shape[0], 1)
+        t = torch.tensor([cli], dtype=torch.float32, device=obs.device).repeat(obs.shape[0], 1)
         # return torch.cat([t,low_actions, mid_actions, obs[..., self.low_obs_idx]], dim=1)
         return torch.cat([low_actions, mid_actions, obs[..., self.low_obs_idx], t], dim=1)
 
@@ -650,7 +652,7 @@ class HierarchicalRunner(BaseRunner):
 
         return policy_fn
 
-    def clip_action(self, actions, action_range, scale=True, resample=True):
+    def clip_action(self, actions, action_range, scale=True, resample=False):
         coverage = None
         clipped_ratio = None
         if scale:
@@ -676,11 +678,11 @@ class HierarchicalRunner(BaseRunner):
         return clipped_actions, coverage, clipped_ratio
 
     def _calculate_coverage(self, actions, action_range, threshold=0.01):
-        min_val, max_val = action_range
-        bins = torch.linspace(min_val, max_val, 100)  # You can adjust the number of bins based on your preference
-        hist = torch.histc(actions, bins=bins.shape[0], min=min_val, max=max_val)
-        coverage = torch.sum(hist > threshold).float() / hist.shape[0]
-        return coverage
+        # min_val, max_val = action_range
+        # bins = torch.linspace(min_val, max_val, 100)  # You can adjust the number of bins based on your preference
+        # hist = torch.histc(actions, bins=bins.shape[0], min=min_val, max=max_val)
+        # coverage = torch.sum(hist > threshold).float() / hist.shape[0]
+        return 0
 
     def _compute_combined_std_coeff(self, coverage, clipped_ratio, target_coverage=0.5):
         return (1 - (-target_coverage + coverage)) * (1 - clipped_ratio)
