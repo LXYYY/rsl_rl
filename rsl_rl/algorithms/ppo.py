@@ -48,6 +48,7 @@ class PPO:
                  lam=0.95,
                  value_loss_coef=1.0,
                  entropy_coef=0.0,
+                 std_coef=0.0,
                  learning_rate=1e-3,
                  max_grad_norm=1.0,
                  use_clipped_value_loss=True,
@@ -66,7 +67,7 @@ class PPO:
         self.actor_critic = actor_critic
         self.actor_critic.to(self.device)
         self.storage = None  # initialized later
-        self.optimizer = optim.Adam(self.actor_critic.parameters(), lr=learning_rate)
+        self.optimizer = optim.Adam(self.actor_critic.parameters(), lr=learning_rate,weight_decay=0.0001)
         self.transition = RolloutStorage.Transition()
 
         # PPO parameters
@@ -79,6 +80,7 @@ class PPO:
         self.lam = lam
         self.max_grad_norm = max_grad_norm
         self.use_clipped_value_loss = use_clipped_value_loss
+        self.std_coef=std_coef
 
     def init_storage(self, num_envs, num_transitions_per_env, actor_obs_shape, critic_obs_shape, action_shape):
         self.storage = RolloutStorage(num_envs, num_transitions_per_env, actor_obs_shape, critic_obs_shape,
@@ -184,7 +186,9 @@ class PPO:
             else:
                 value_loss = (returns_batch - value_batch).pow(2).mean()
 
-            loss = surrogate_loss + self.value_loss_coef * value_loss - self.entropy_coef * entropy_batch.mean()
+            std_penalty = self.std_coef * torch.sum(self.actor_critic.std**2)
+
+            loss = surrogate_loss + self.value_loss_coef * value_loss - self.entropy_coef * entropy_batch.mean() + std_penalty
 
             # Gradient step
             self.optimizer.zero_grad()
