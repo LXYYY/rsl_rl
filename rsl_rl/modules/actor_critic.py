@@ -167,11 +167,7 @@ class ActorCritic(nn.Module):
         mean = torch.where(invalid_values, torch.zeros_like(mean), mean)
         # self.pstd = torch.sigmoid(self.std) * self.std_max
         std = torch.clip(self.std, min=1e-5)
-        if self.std_decay_with_time:
-            self.std_decay = torch.pow(0.99, observations[:, -1] * 100).unsqueeze(1)
-            std = std.unsqueeze(0) * self.std_decay
-        self.wstd = std * self.std_coeff
-        self.distribution = Normal(mean, mean * 0. + self.wstd)
+        self.distribution = Normal(mean, mean * 0. + std)
 
     def act(self, observations, **kwargs):
         self.update_distribution(observations)
