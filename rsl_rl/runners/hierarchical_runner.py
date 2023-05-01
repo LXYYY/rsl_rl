@@ -199,6 +199,7 @@ class HierarchicalRunner(BaseRunner):
         low_timeout = torch.ones(self.env.num_envs, dtype=torch.bool, device=self.device)
         mid_dones = torch.ones(self.env.num_envs, dtype=torch.bool, device=self.device)
         mid_timeout = torch.ones(self.env.num_envs, dtype=torch.bool, device=self.device)
+        high_dones= torch.ones(self.env.num_envs, dtype=torch.bool, device=self.device)
 
         mid_rew_buf = torch.zeros(self.env.num_envs, 1, dtype=torch.float32, device=self.device)
         high_rew_buf = torch.zeros(self.env.num_envs, 1, dtype=torch.float32, device=self.device)
@@ -299,10 +300,9 @@ class HierarchicalRunner(BaseRunner):
                     new_mid_rewards += high_penalty * rew_r[1]
                     low_rewards += high_penalty * rew_r[2]
 
-                    high_dones, mid_dones, low_dones = self.env.get_done_levels()
+                    high_dones_, mid_dones, low_dones = self.env.get_done_levels()
 
-                    if high_update:
-                        self.env.reset_terminated()
+                    high_dones |= high_dones_
 
                     critic_obs = privileged_obs if privileged_obs is not None else obs
                     obs, critic_obs, new_high_rewards, dones = obs.to(self.device), critic_obs.to(
@@ -328,7 +328,7 @@ class HierarchicalRunner(BaseRunner):
                         cur_mid_episode_length += 1
                         cur_low_episode_length += 1
                         # TODO: this is not accurate
-                        new_ids = ((dones) > 0).nonzero(as_tuple=False)
+                        new_ids = ((high_dones) > 0).nonzero(as_tuple=False)
                         low_new_ids = ((low_update | dones) > 0).nonzero(as_tuple=False)
                         mid_new_ids = ((mid_update | dones) > 0).nonzero(as_tuple=False)
                         rewbuffer.extend(cur_reward_sum[new_ids][:, 0].cpu().numpy().tolist())
@@ -365,6 +365,9 @@ class HierarchicalRunner(BaseRunner):
                         high_return += 1
                         high_push += 1
                         self.high_alg.process_env_step(high_rew_buf, high_dones.unsqueeze(1), infos)
+                        high_dones_[:] = 0
+
+                        self.env.reset_terminated()
 
                         high_rew_buf[:] = 0
 
